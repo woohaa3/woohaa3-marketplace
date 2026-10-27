@@ -46,7 +46,7 @@ extensions:
       enabled: true
       repos: woohaa3/woohaa3-marketplace
     # <keyId>=<base64 公钥>，逗号分隔；示例插件用下面这把 key
-    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjfDA++dqDXXRoTMnclB46Aw=
+    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjXfDA++dqDXXRoTMnclB46Aw=
 ```
 
 - `enabled` 缺省为 `false`：没显式打开时客户端不会向 GitHub 发任何请求。

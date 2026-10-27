@@ -1,10 +1,12 @@
 # woohaa3-marketplace
 
-Woohaa3 的**公开插件市场仓库**：存放公开扩展的源码，并以 GitHub Release 资产的形式发布
-可安装的 `.wxt` 包。
+Woohaa3 的插件市场仓库：存放扩展的源码，并以 GitHub Release 资产的形式发布可安装的
+`.wxt` 包。
 
 客户端不自建服务器也能从这里装扩展——本机宿主自带一个 GitHub Release 市场来源
 （`sourceId: github-release`），它直接读本仓库的 Release 资产。
+
+> 本仓库是 **private**，所以客户端必须配置访问令牌（见下文）。令牌只读 Releases，不会写任何东西。
 
 ```text
 extensions/<extensionId>/          源码（extension.json + src/frontend/…）
@@ -21,7 +23,21 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 
 ## 从本仓库安装（客户端配置）
 
-在客户端的本机配置 `client/web/woohaa.config.yml` 里加：
+**令牌**（private 仓库必需）：Fine-grained PAT，Resource owner 选 org，Repository access 只勾
+本仓库，Repository permissions 只开 **Contents: Read-only**（Metadata 会自动带上）。其余权限一律
+不需要。token 写进密钥文件（不能写普通配置文件）：
+
+```yaml
+# client/web/woohaa.secrets.yml
+extensions:
+  marketplace:
+    github:
+      token: github_pat_xxx
+```
+
+`WOOHAA3_GITHUB_TOKEN` 环境变量可替代这一项。
+
+**其余配置**在 `client/web/woohaa.config.yml`：
 
 ```yaml
 extensions:
@@ -34,8 +50,6 @@ extensions:
 ```
 
 - `enabled` 缺省为 `false`：没显式打开时客户端不会向 GitHub 发任何请求。
-- 私有仓库或遇到限流时，把令牌放 `extensions.marketplace.github.token`（属于密钥，写
-  `woohaa.secrets.yml` 或环境变量 `WOOHAA3_GITHUB_TOKEN`）。
 - `trustedKeys` 是本机信任根，只能追加；示例插件的私钥不在此仓库里，**别人无法冒充发布**。
   换自备密钥重新发布时，把新的 keyId / 公钥追加进来即可。
 
@@ -67,6 +81,7 @@ gh release create v0.1.0 hello-marketplace-0.1.0.wxt --title v0.1.0 --notes "hel
 | `version` | 核心三段 semver（`1.2.3`）；带预发布后缀的文件名无法无歧义拆分，来源会跳过 |
 | 摘要 | GitHub API 需对资产返回 `digest: sha256:…`；**拿不到摘要的资产不参与安装** |
 | 签名 | 市场渠道必须签名，且签名 key 在客户端信任根里；未签名包只能走 local-file 导入 |
+| 私有仓库 | 带令牌时下载走资产 API（`Accept: application/octet-stream`）；网页直链对 private 仓库带令牌只会 404，客户端需包含该支持 |
 
 ## 目录
 

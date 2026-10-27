@@ -1,0 +1,8 @@
+{
+  "name": "@woohaa3/extension-hello-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "displayName": "市场示例插件",
+  "description": "演示「GitHub 仓库 → Release → 客户端市场安装」全链路的最小浏览器插件。"
+}

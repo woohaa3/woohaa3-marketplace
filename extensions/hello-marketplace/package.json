@@ -1,6 +1,6 @@
 {
   "name": "@woohaa3/extension-hello-marketplace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "displayName": "市场示例插件",

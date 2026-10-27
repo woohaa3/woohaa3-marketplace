@@ -21,6 +21,11 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 [extensions/hello-marketplace](extensions/hello-marketplace) 是全链路 demo：装好后，画布右下角
 状态气泡里会出现一条「市场 demo」读数。它足够小，只用来证明外部来源这条路是通的。
 
+它是**纯浏览器扩展**：`extension.json` 只有分发字段（`version` / `engines` / `icon`），
+没有 `backend` / `hostPlugin` / `site`。后三者属于有后端入口的扩展——纯前端扩展声明
+`site` 会进站点控制面 catalog，却没有可激活的东西，面板会一直显示「正在应用…」。
+浏览器本地扩展靠用户自己的插件开关启停。
+
 ## 从本仓库安装（客户端配置）
 
 **令牌**（private 仓库必需）：Fine-grained PAT，Resource owner 选 org，Repository access 只勾
@@ -63,10 +68,10 @@ extensions:
 # 1. 打包 + 签名（--key 省略则是未签名包，市场渠道会拒绝）
 node client/scripts/pack-extension.mjs marketplace/extensions/hello-marketplace \
   --key <ed25519私钥.pem> \
-  --out hello-marketplace-0.1.0.wxt
+  --out hello-marketplace-0.2.0.wxt
 
 # 2. 发布 Release，资产名必须是 <extensionId>-<version>.wxt
-gh release create v0.1.0 hello-marketplace-0.1.0.wxt --title v0.1.0 --notes "hello-marketplace 0.1.0"
+gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hello-marketplace 0.2.0"
 ```
 
 首次需要密钥对时：`node client/scripts/pack-extension.mjs --genkey <prefix>`

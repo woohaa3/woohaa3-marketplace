@@ -1,22 +1,13 @@
 {
   "schemaVersion": 1,
   "extensionId": "hello-marketplace",
-  "site": {
-    "name": "市场示例插件",
-    "description": "演示「GitHub 仓库 → Release → 客户端市场安装」全链路的最小浏览器插件。",
-    "version": "0.1.0",
-    "configSchema": {
-      "schemaId": "hello-marketplace-config",
-      "schemaVersion": 1
-    },
-    "capabilities": [
-      {
-        "id": "canvas-slot:hello-marketplace",
-        "kind": "capability",
-        "description": "在画布右下角状态气泡贡献一条示例读数"
-      }
-    ],
-    "defaultEnabled": true,
-    "order": 90
+  "version": "0.2.0",
+  "engines": {
+    "hostAbi": "^1.0.0",
+    "sdkAbi": "^1.0.0",
+    "protocolVersion": 1
+  },
+  "icon": {
+    "glyph": "plugin"
   }
 }

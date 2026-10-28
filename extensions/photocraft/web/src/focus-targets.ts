@@ -7,8 +7,10 @@ import { decodeImageEditDocument, imageEditDocumentContentIdentity } from "../..
  *
  *   canvasRuntime.setImageFocusTargets(ids)
  *
- * 聚焦编辑仍然必须注册目标，否则双击图片节点会被导航层直接拒绝，
- * 提示「聚焦目标不可用」（`navigation/transition.ts` 的 `focus-target-invalid`）。
+ * 聚焦编辑仍然必须注册目标：导航层的图片目标校验以「已注册集合」为**正向**证据，未注册时
+ * 才回落到宿主的 canonical 判定（`client/web/frontend/src/cordis/focus/image-focus-target.ts`）。
+ * 编辑器在场却没有注册，会让扩展自己的校验（工程/草稿/历史）被宿主兜底绕过，
+ * 因此这里仍是必须的。
  *
  * 本模块判断目标是否可用，并解析媒体地址、资产 metadata 和进入时的内容身份，供写回冲突检查。
  *

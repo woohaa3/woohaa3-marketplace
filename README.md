@@ -26,6 +26,27 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 `site` 会进站点控制面 catalog，却没有可激活的东西，面板会一直显示「正在应用…」。
 浏览器本地扩展靠用户自己的插件开关启停。
 
+## 完整工作区示例：`photocraft`
+
+[extensions/photocraft](extensions/photocraft) 是**多包工作区**：`extension/` 是可加载扩展包
+（`extension.json` + `src/frontend/` + 后端工厂），`web/`、`protocol/`、`project-verifier/` 是它的
+编辑器与核验依赖。它演示另一条链路——宿主在**开发者模式**下直接指向源码目录，作者侧增量重建，
+产物变化即重载扩展实例，不经过 Release、签名与受管安装：
+
+```sh
+# 依赖与首次构建（client 与 marketplace 同级；父仓里它们是两个子模块）
+pnpm -C marketplace/extensions/photocraft install --ignore-scripts
+pnpm -C marketplace/extensions/photocraft build:extension
+
+# 作者侧 watch + 宿主登记
+node client/web/scripts/build-extension-browser.mjs \
+  --cwd marketplace/extensions/photocraft/extension --watch
+pnpm dev --dev-source marketplace/extensions/photocraft/extension
+```
+
+前端产物变化会重装该扩展实例（不刷新页面、不重开画布）；后端仍受 `hostPlugin` 热切换范围限制，
+细节与边界见 [extensions/photocraft/extension/README.md](extensions/photocraft/extension/README.md)。
+
 ## 从本仓库安装（客户端配置）
 
 **令牌**（private 仓库必需）：Fine-grained PAT，Resource owner 选 org，Repository access 只勾
@@ -93,4 +114,5 @@ gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hel
 | 路径 | 内容 |
 | --- | --- |
 | `extensions/<id>/` | 扩展源码；`extension.json` 声明、`src/frontend/` 浏览器入口 |
+| `extensions/<id>/`（多包） | 复杂扩展可自带 `pnpm-workspace.yaml`；此时可加载包放在 `extension/`，其余包是它的构建依赖（见 `photocraft`） |
 | `.gitignore` | 构建产物（`browser-dist/`、`backend-dist/`）不入库，发布只走 Release 资产 |

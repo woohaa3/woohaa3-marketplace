@@ -1,0 +1,45 @@
+{
+  "name": "@woohaa3/photocraft-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PhotoCraft 官方 Web 编辑器、文档帧捕获与 Bevy 聚焦呈现",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/photocraft-overlay.css",
+    "./app/*": "./app/*"
+  },
+  "scripts": {
+    "build:app": "bash ./build-app.sh",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "react": "^18.3.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.7",
+    "@woohaa3/frontend": "link:../../../../client/web/frontend",
+    "jsdom": "^30.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.0.0",
+    "@woohaa3/media-service": "link:../../../../client/web/services/media-service",
+    "@woohaa3/canvas-service": "link:../../../../client/web/services/canvas-service",
+    "yjs": "^13.6.32"
+  },
+  "dependencies": {
+    "@woohaa3/photocraft-protocol": "workspace:*",
+    "@woohaa3/contracts": "link:../../../../client/web/contracts"
+  }
+}

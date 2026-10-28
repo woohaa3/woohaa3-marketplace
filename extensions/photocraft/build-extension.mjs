@@ -9,7 +9,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const source = path.join(root, 'extension');
 const outIndex = process.argv.indexOf('--outdir');
 if (outIndex !== -1 && !process.argv[outIndex + 1]) throw new Error('--outdir requires a directory');
-const destination = path.resolve(outIndex === -1 ? path.join(root, '../../../../client/extensions/photocraft') : process.argv[outIndex + 1]);
+const destination = path.resolve(outIndex === -1 ? path.join(root, '../../.local/photocraft') : process.argv[outIndex + 1]);
 if (destination === root || root.startsWith(`${destination}${path.sep}`) || destination.startsWith(`${root}${path.sep}`)) {
   throw new Error('Output must be outside the authoring workspace');
 }

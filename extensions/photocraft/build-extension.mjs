@@ -22,9 +22,17 @@ try {
     cpSync(path.join(source, file), path.join(staging, file), { recursive: true });
   }
   const pkg = JSON.parse(readFileSync(path.join(source, 'package.json'), 'utf8'));
+  // 预构建包里没有 src/：exports 只保留运行时入口，不能把 authoring 的 types 指回源码。
+  const runtimeExports = Object.fromEntries(
+    Object.entries(pkg.exports ?? {}).map(([subpath, target]) => {
+      if (typeof target === 'string') return [subpath, target];
+      const runtime = target.import ?? target.default ?? target.node;
+      return [subpath, runtime ? { import: runtime } : target];
+    })
+  );
   // Build scripts and authoring dependencies must never escape into an installed package.
   writeFileSync(path.join(staging, 'package.json'), JSON.stringify({
-    name: pkg.name, version: pkg.version, private: false, type: 'module', exports: pkg.exports,
+    name: pkg.name, version: pkg.version, private: false, type: 'module', exports: runtimeExports,
     files: ['dist', 'browser-dist', 'extension.json', 'README.md'],
   }, null, 2) + '\n');
   writeFileSync(path.join(staging, 'README.md'), '# PhotoCraft runtime extension\n\nPrebuilt runtime; no source checkout, build toolchain or npm installation required.\nLoaded by the standard extension scanner and enabled by default.\nThird-party licenses: browser-dist/assets/photocraft/LICENSE-MIT and LICENSE-APACHE.\n');

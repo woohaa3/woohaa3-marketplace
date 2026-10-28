@@ -1,0 +1,5 @@
+packages:
+  - protocol
+  - project-verifier
+  - web
+  - extension

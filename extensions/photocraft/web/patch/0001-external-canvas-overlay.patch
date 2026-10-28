@@ -1,0 +1,1622 @@
+diff --git a/apps/photocraft-web/src/main.rs b/apps/photocraft-web/src/main.rs
+index 0802a02..194e885 100644
+--- a/apps/photocraft-web/src/main.rs
++++ b/apps/photocraft-web/src/main.rs
+@@ -22,12 +22,18 @@ mod preset_bridge;
+ #[cfg(target_arch = "wasm32")]
+ mod indexed_presets;
+ 
++/// The JS entry points for the external-canvas seam (`overlay.rs`).
++#[cfg(target_arch = "wasm32")]
++mod overlay_bridge;
++
+ #[cfg(target_arch = "wasm32")]
+ mod web;
++#[cfg(target_arch = "wasm32")]
++mod runtime;
+ 
+ #[cfg(target_arch = "wasm32")]
+ fn main() {
+-    web::start();
++    // Explicit runtime_create(canvas, asset_base_url) owns startup.
+ }
+ 
+ #[cfg(not(target_arch = "wasm32"))]
+diff --git a/apps/photocraft-web/src/overlay_bridge.rs b/apps/photocraft-web/src/overlay_bridge.rs
+new file mode 100644
+index 0000000..5922c2a
+--- /dev/null
++++ b/apps/photocraft-web/src/overlay_bridge.rs
+@@ -0,0 +1,82 @@
++//! The JS side of the external-canvas seam (`photocraft_ui_egui::overlay`).
++//!
++//! A page can hand PhotoCraft the picture for the document area without touching the Rust API:
++//!
++//! ```js
++//! const { overlay_set_rgba, overlay_set_transparent, overlay_clear } = await import('./app/photocraft-web.js');
++//! const bytes = ctx.getImageData(0, 0, w, h).data;      // Uint8ClampedArray, RGBA
++//! overlay_set_rgba(w, h, new Uint8Array(bytes.buffer), true);
++//! ```
++//!
++//! Frames are copied into an egui texture, so no wgpu texture sharing is involved and the same
++//! code works on WebGPU and WebGL2, and on the CPU canvas path.
++
++use wasm_bindgen::prelude::*;
++
++/// Say whether a takeover is live.
++#[wasm_bindgen]
++pub fn overlay_active() -> bool {
++    photocraft_ui_egui::overlay::is_active()
++}
++
++/// The document area's last on-screen rectangle, in CSS pixels (`[x, y, w, h]`), so a host can
++/// position its own element over it. `null` before the first frame with a takeover.
++#[wasm_bindgen]
++pub fn overlay_rect() -> Option<Box<[f32]>> {
++    photocraft_ui_egui::overlay::last_rect().map(|r| Box::new(r) as Box<[f32]>)
++}
++
++/// Hand the document area to the host: PhotoCraft draws nothing there.
++#[wasm_bindgen]
++pub fn overlay_set_transparent() {
++    photocraft_ui_egui::overlay::set_transparent();
++}
++
++/// Show `rgba` (row-major, top row first, 4 bytes per pixel) in the document area.
++///
++/// `fill` stretches it to the whole area; otherwise it keeps `width / height` inside the
++/// document's rectangle, so it does not distort as the camera moves.
++#[wasm_bindgen]
++pub fn overlay_set_rgba(width: u32, height: u32, rgba: &[u8], fill: bool) -> Result<(), JsError> {
++    let expected = (width as usize) * (height as usize) * 4;
++    if width == 0 || height == 0 {
++        return Err(JsError::new("overlay: width and height must be positive"));
++    }
++    if rgba.len() != expected {
++        return Err(JsError::new(&format!("overlay: expected {expected} bytes of RGBA, got {}", rgba.len())));
++    }
++    photocraft_ui_egui::overlay::set_image(photocraft_ui_egui::overlay::Frame {
++        width,
++        height,
++        rgba: rgba.to_vec(),
++        fill,
++    });
++    Ok(())
++}
++
++/// Show a solid colour (a quick way to check the seam).
++#[wasm_bindgen]
++pub fn overlay_set_solid(width: u32, height: u32, rgba: Box<[u8]>) -> Result<(), JsError> {
++    let px: [u8; 4] = rgba.as_ref().try_into().map_err(|_| JsError::new("overlay: expected exactly 4 bytes"))?;
++    photocraft_ui_egui::overlay::set_image(photocraft_ui_egui::overlay::Frame::solid(width.max(1), height.max(1), px));
++    Ok(())
++}
++
++/// Give the document area back to PhotoCraft.
++#[wasm_bindgen]
++pub fn overlay_clear() {
++    photocraft_ui_egui::overlay::clear();
++}
++
++#[wasm_bindgen]
++pub fn overlay_set_capture_clean(on: bool) { photocraft_ui_egui::overlay::set_capture_clean(on); }
++#[wasm_bindgen]
++pub fn overlay_state() -> String { photocraft_ui_egui::overlay::state() }
++#[wasm_bindgen]
++pub fn overlay_request_fit() { photocraft_ui_egui::overlay::request_fit(); }
++#[wasm_bindgen]
++pub fn overlay_request_export(max_side: u32) { photocraft_ui_egui::overlay::request_export(max_side); }
++#[wasm_bindgen]
++pub fn overlay_take_export() -> Option<Vec<u8>> { photocraft_ui_egui::overlay::take_export() }
++#[wasm_bindgen]
++pub fn overlay_export_error() -> Option<String> { photocraft_ui_egui::overlay::export_error() }
+diff --git a/apps/photocraft-web/src/runtime.rs b/apps/photocraft-web/src/runtime.rs
+new file mode 100644
+index 0000000..b42eaa5
+--- /dev/null
++++ b/apps/photocraft-web/src/runtime.rs
+@@ -0,0 +1,73 @@
++//! Explicit single-window runner. Importing the module never starts an editor.
++use std::cell::RefCell;
++use wasm_bindgen::{prelude::*, JsCast};
++use photocraft_ui_egui::overlay;
++thread_local! {
++    static RUNNER: RefCell<Option<eframe::WebRunner>> = const { RefCell::new(None) };
++    static LISTENERS: RefCell<Vec<Listener>> = const { RefCell::new(Vec::new()) };
++    static OPENS: RefCell<std::collections::HashMap<String, String>> = RefCell::new(Default::default());
++    static BASE: RefCell<String> = const { RefCell::new(String::new()) };
++}
++struct Listener { target: web_sys::EventTarget, kind: &'static str, callback: Closure<dyn FnMut(web_sys::Event)> }
++pub fn retain_listener(target: web_sys::EventTarget, kind: &'static str, callback: Closure<dyn FnMut(web_sys::Event)>) {
++    LISTENERS.with_borrow_mut(|v| v.push(Listener { target, kind, callback }));
++}
++pub fn install(runner: eframe::WebRunner) -> Result<(), JsValue> {
++    RUNNER.with_borrow_mut(|r| { if r.is_some() { Err(JsValue::from_str("PhotoCraft already exists")) } else { *r = Some(runner); Ok(()) } })
++}
++pub fn asset_url(path: &str) -> String { BASE.with_borrow(|b| format!("{b}{path}")) }
++#[wasm_bindgen]
++pub async fn runtime_create(canvas: web_sys::HtmlCanvasElement, asset_base_url: String) -> Result<(), JsValue> {
++    if RUNNER.with_borrow(|r| r.is_some()) { return Err(JsValue::from_str("PhotoCraft already exists")); }
++    overlay::set_hosted(true);
++    BASE.with_borrow_mut(|b| *b = asset_base_url);
++    crate::web::start(canvas).await
++}
++#[wasm_bindgen]
++pub fn runtime_destroy() {
++    RUNNER.with_borrow_mut(|r| { if let Some(runner) = r.take() { runner.destroy(); } });
++    LISTENERS.with_borrow_mut(|v| { for l in v.drain(..) { let _ = l.target.remove_event_listener_with_callback(l.kind, l.callback.as_ref().unchecked_ref()); } });
++    OPENS.with_borrow_mut(|m| m.clear());
++    overlay::set_hosted(false); overlay::set_presentation(true, true); overlay::reset();
++}
++fn with_app<T>(f: impl FnOnce(&mut photocraft_ui_egui::PhotocraftApp) -> Result<T, String>) -> Result<T, JsValue> {
++    RUNNER.with_borrow(|r| {
++        let runner = r.as_ref().ok_or("PhotoCraft is not running")?;
++        let mut shell = runner.app_mut::<crate::web::WebShell>().ok_or("PhotoCraft is unavailable")?;
++        f(&mut shell.app)
++    }).map_err(|e| JsValue::from_str(&e))
++}
++#[wasm_bindgen]
++pub fn runtime_open(operation_id: String, name: String, bytes: &[u8]) -> Result<String, JsValue> {
++    if let Some(id) = OPENS.with_borrow(|m| m.get(&operation_id).cloned()) { return Ok(id); }
++    let id = with_app(|app| photocraft_ui_egui::overlay_workspace::open(app, &name, bytes))?;
++    OPENS.with_borrow_mut(|m| { m.insert(operation_id, id.clone()); });
++    overlay::request_fit();
++    Ok(id)
++}
++#[wasm_bindgen]
++pub fn runtime_activate(id: String) -> Result<(), JsValue> {
++    with_app(|app| photocraft_ui_egui::overlay_workspace::activate(app, &id))?;
++    overlay::wake_runtime(); Ok(())
++}
++#[wasm_bindgen]
++pub fn runtime_close(id: String) -> Result<(), JsValue> {
++    with_app(|app| photocraft_ui_egui::overlay_workspace::close(app, &id))?;
++    OPENS.with_borrow_mut(|m| m.retain(|_, doc| doc != &id));
++    overlay::wake_runtime(); Ok(())
++}
++#[wasm_bindgen]
++pub fn runtime_export(id: String, project: bool) -> Result<Vec<u8>, JsValue> {
++    with_app(|app| {
++        let st = app.session.documents().iter().find(|d| d.doc.id.0.to_string() == id).ok_or("Document is closed")?;
++        photocraft_io::export(&st.doc, if project { "document.pcraft" } else { "export.png" }, &Default::default()).map(|r| r.bytes).map_err(|e| e.to_string())
++    })
++}
++
++#[wasm_bindgen]
++pub fn runtime_presentation(visible: bool, input: bool) { overlay::set_presentation(visible, input); }
++#[wasm_bindgen]
++pub fn runtime_requests() -> String { overlay::take_requests() }
++
++#[wasm_bindgen]
++pub fn runtime_documents() -> Result<String, JsValue> { with_app(|app| Ok(photocraft_ui_egui::overlay_workspace::list(app))) }
+diff --git a/apps/photocraft-web/src/web.rs b/apps/photocraft-web/src/web.rs
+index 87e6eaf..db322a9 100644
+--- a/apps/photocraft-web/src/web.rs
++++ b/apps/photocraft-web/src/web.rs
+@@ -25,7 +25,7 @@ const OPEN_EXTS: &[&str] = &[
+     "afphoto", "afpub",
+ ];
+ const SVG_EXTS: &[&str] = &["svg", "svgz"];
+-const CANVAS_ID: &str = "photocraft_canvas";
++
+ 
+ /// Fonts the host serves next to the page (`photocraft_ui_egui::served_fonts`): craft-fonts' manifest
+ /// format, each file relative to the site root. No manifest (a 404) means no served fonts.
+@@ -44,26 +44,18 @@ struct ServedFonts {
+ 
+ type Served = Arc<Mutex<ServedFonts>>;
+ 
+-pub fn start() {
++pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<(), wasm_bindgen::JsValue> {
+     eframe::WebLogger::init(log::LevelFilter::Info).ok();
+-    wasm_bindgen_futures::spawn_local(async {
+-        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+-            log::error!("no document");
+-            return;
+-        };
+-        let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
+-            log::error!("missing <canvas id=\"{CANVAS_ID}\">");
+-            return;
+-        };
+-        let q = query();
+-        let force_cpu = q.contains("cpu");
+-        let mut options = eframe::WebOptions::default();
+-        photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
+-        if q.contains("webgl")
+-            && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
+-        {
+-            create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
+-        }
++    // `interface.language` defaults to `auto`; a browser has no OS-locale API, so hand the shell's
++    // language list to the UI before the first frame resolves the preference (native keeps using
++    // sys-locale). Changing the browser language later needs a page reload, as native caches too.
++    i18n::set_system_tags(browser_languages());
++    let force_cpu = false;
++    let mut options = eframe::WebOptions::default();
++    photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
++    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup {
++        create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
++    }
+         // Hydrate before constructing an interactive session: a late load must never undo a
+         // user deletion/reorder. Storage denial or timeout still opens a usable session.
+         let (database, presets, mut preset_warnings) = match crate::indexed_presets::load().await {
+@@ -75,8 +67,9 @@ pub fn start() {
+             }
+         };
+         let pen_target = canvas.clone();
+-        let result = eframe::WebRunner::new()
+-            .start(
++        let runner = eframe::WebRunner::new();
++        crate::runtime::install(runner.clone())?;
++        let result = runner.start(
+                 canvas,
+                 options,
+                 Box::new(move |cc| {
+@@ -106,13 +99,8 @@ pub fn start() {
+                 }),
+             )
+             .await;
+-        if let Some(el) = document.get_element_by_id("photocraft_loading") {
+-            match result {
+-                Ok(()) => el.remove(),
+-                Err(e) => el.set_inner_html(&format!("<p>PhotoCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+-            }
+-        }
+-    });
++        if result.is_err() { crate::runtime::runtime_destroy(); }
++        result
+ }
+ 
+ /// Pen pressure, tilt, twist and the eraser button from Pointer Events (eframe forwards none of them for pens) into
+@@ -123,7 +111,8 @@ fn listen_pen(target: &web_sys::HtmlCanvasElement, feed: photocraft_ui_egui::sty
+     use wasm_bindgen::closure::Closure;
+     for kind in ["pointerdown", "pointermove", "pointerup", "pointercancel", "pointerleave"] {
+         let feed = feed.clone();
+-        let cb = Closure::<dyn FnMut(web_sys::PointerEvent)>::new(move |e: web_sys::PointerEvent| {
++        let cb = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
++            let Ok(e) = event.dyn_into::<web_sys::PointerEvent>() else { return };
+             let ty = e.type_();
+             if ty == "pointerup" && e.pointer_type() == "pen" {
+                 return;
+@@ -140,7 +129,7 @@ fn listen_pen(target: &web_sys::HtmlCanvasElement, feed: photocraft_ui_egui::sty
+             }));
+         });
+         if target.add_event_listener_with_callback(kind, cb.as_ref().unchecked_ref()).is_ok() {
+-            cb.forget();
++            crate::runtime::retain_listener(target.clone().into(), kind, cb);
+         }
+     }
+ }
+@@ -158,9 +147,9 @@ fn listen_drag(target: &web_sys::HtmlCanvasElement) -> DragPos {
+     for kind in ["dragover", "drop"] {
+         let pos = pos.clone();
+         // A DragEvent is a MouseEvent: only its client position is read.
+-        let cb = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| pos.set(Some((e.client_x() as f32, e.client_y() as f32))));
++        let cb = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| { if let Ok(e) = e.dyn_into::<web_sys::MouseEvent>() { pos.set(Some((e.client_x() as f32, e.client_y() as f32))); } });
+         if target.add_event_listener_with_callback(kind, cb.as_ref().unchecked_ref()).is_ok() {
+-            cb.forget();
++            crate::runtime::retain_listener(target.clone().into(), kind, cb);
+         }
+     }
+     pos
+@@ -177,26 +166,11 @@ fn drag_pos_service(canvas: web_sys::HtmlCanvasElement, pos: DragPos) -> photocr
+     })
+ }
+ 
+-/// Closing or reloading the tab while a document has unsaved changes asks first, as closing the
+-/// desktop window does: the browser shows its own "Leave site?" prompt (#1380). `unsaved` is
+-/// refreshed every frame by [`WebShell`].
++/// Reloading or closing a tab never prompts: the embedding host owns document settlement and keeps
++/// unsaved work in memory only, so a browser "Leave site?" dialog would fire on every refresh and
++/// could not save anything. `unsaved` is still refreshed every frame by [`WebShell`] for the host.
+ fn guard_unload(unsaved: Arc<AtomicBool>) {
+-    use wasm_bindgen::closure::Closure;
+-    let Some(window) = web_sys::window() else { return };
+-    let cb = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(move |e: web_sys::BeforeUnloadEvent| {
+-        if unsaved.load(Ordering::Relaxed) {
+-            e.prevent_default();
+-            // Older browsers show the prompt only when a return value is set.
+-            e.set_return_value("");
+-        }
+-    });
+-    if window.add_event_listener_with_callback("beforeunload", cb.as_ref().unchecked_ref()).is_ok() {
+-        cb.forget();
+-    }
+-}
+-
+-fn query() -> String {
+-    web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
++    let _ = unsaved;
+ }
+ 
+ /// Reads the served font manifest, if the host has one, and lists its families in the font menus.
+@@ -247,7 +221,7 @@ async fn fetch_bytes(url: &str, integrity: Option<&str>) -> Result<Vec<u8>, Stri
+     if let Some(sri) = integrity {
+         init.set_integrity(sri);
+     }
+-    let request = window.fetch_with_str_and_init(url, &init);
++    let request = window.fetch_with_str_and_init(&crate::runtime::asset_url(url), &init);
+     let resp: web_sys::Response = JsFuture::from(request).await.map_err(js)?.dyn_into().map_err(|_| "not a Response")?;
+     if !resp.ok() {
+         return Err(format!("HTTP {}", resp.status()));
+@@ -258,8 +232,8 @@ async fn fetch_bytes(url: &str, integrity: Option<&str>) -> Result<Vec<u8>, Stri
+ 
+ /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously,
+ /// so the app's own drop path can't handle them) and feed them through the inboxes.
+-struct WebShell {
+-    app: PhotocraftApp,
++pub(crate) struct WebShell {
++    pub(crate) app: PhotocraftApp,
+     /// Dropped files to open as documents.
+     inbox: Inbox,
+     /// Dropped files to place on the active document's canvas.
+@@ -293,6 +267,10 @@ impl WebShell {
+     /// Fetches the served families asked for (picked in a font menu, or needed by a layout) and
+     /// installs the files that arrived.
+     fn serve_fonts(&mut self, ctx: &egui::Context) {
++        // A Chinese UI can show no document text at all, so `request_for_text` would never ask for
++        // the script font: drive the request from the interface language instead. `request` and
++        // `fetched` dedupe repeats, so calling this every frame downloads each file once.
++        served_fonts::request_for_languages([i18n::current().code()]);
+         let requested = served_fonts::take_requests();
+         let (fetch, arrived) = {
+             let mut s = self.served.lock().unwrap_or_else(|e| e.into_inner());
+@@ -319,18 +297,34 @@ impl WebShell {
+                 }
+             });
+         }
++        // Script fallbacks are the UI's fallbacks too: register them with egui before the document
++        // text engine, or Chinese menus stay tofu even though documents would render.
++        served_fonts::install_ui_delivered(ctx, &arrived);
+         served_fonts::install(&mut self.app, arrived);
+     }
+ }
+ 
+ impl eframe::App for WebShell {
++    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> { Some(self) }
++    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
++        self.app.clear_color(visuals)
++    }
++
+     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
++        if !photocraft_ui_egui::overlay::input_enabled() { raw_input.events.clear(); raw_input.dropped_files.clear(); raw_input.hovered_files.clear(); }
+         // A tap reaches eframe as Pointer Events and Touch Events: keep one press per tap, or the
+         // twin press closes the menu the first one opened (#2095).
+         photocraft_ui_egui::touch_twins::drop_twins(ctx, raw_input);
+     }
+ 
+     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
++        // Before the visibility gate: a hidden app may still have to be woken by the host.
++        photocraft_ui_egui::overlay::remember_ctx(ctx);
++        // Fonts must be requested and installed while the host keeps the runtime hidden, so the
++        // first visible frame usually has them; there is deliberately no first-frame gate on the
++        // download (offline or blocked fonts still leave an editable, if briefly tofu, UI).
++        self.serve_fonts(ctx);
++        if !photocraft_ui_egui::overlay::visible() { return; }
+         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+         if !dropped.is_empty() {
+             let names: Vec<String> =
+@@ -355,12 +349,14 @@ impl eframe::App for WebShell {
+                 }
+             });
+         }
+-        self.serve_fonts(ctx);
+         self.app.logic(ctx, frame);
+         self.save_presets(ctx);
+     }
+ 
+     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
++        // Same reason as `logic`: keep the context reachable while nothing is drawn.
++        photocraft_ui_egui::overlay::remember_ctx(ui.ctx());
++        if !photocraft_ui_egui::overlay::visible() { return; }
+         // Only while a preset change is unsaved. Storage the browser denies from the start (a
+         // sandboxed iframe, blocked site data) loses nothing until the first change, and that
+         // change brings the banner with the reason.
+diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
+index d2543a5..74e08af 100644
+--- a/crates/ui-egui/src/canvas.rs
++++ b/crates/ui-egui/src/canvas.rs
+@@ -2858,6 +2858,7 @@ fn open_tab_clicks(
+     cancel_open: Option<photocraft_engine::jobs::JobId>,
+ ) {
+     if let Some(i) = activate {
++        if crate::overlay::hosted() { if let Some(st) = app.session.documents().get(i) { crate::overlay::request_document("activate", st.doc.id.0.to_string()); } return; }
+         app.session.set_active(i);
+         app.jobs.focus = None;
+     }
+@@ -3482,11 +3483,21 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
+     let stroke_dismissal = primary && crate::shape_stroke_ui::dismiss_from_canvas(app, &response);
+     let painter = ui.painter_at(rect);
+ 
+-    match crate::prefs_ui::pasteboard_color(app) {
+-        Some(c) => {
+-            ui.painter_at(rect).rect_filled(rect, 0.0, c);
++    // Let `overlay` reach this frame loop and publish the document area, whether or not a host
++    // has taken over yet (see `overlay::report`).
++    crate::overlay::report(&ctx, rect);
++
++    // A host takeover can also mean "draw nothing here" (`overlay::set_transparent`): the
++    // pasteboard around and behind the document is then left unpainted as well, so a transparent
++    // app surface lets the host's own element show through the whole area.
++    let host_transparent = crate::overlay::is_transparent();
++    if !host_transparent && !crate::overlay::capture_clean() {
++        match crate::prefs_ui::pasteboard_color(app) {
++            Some(c) => {
++                ui.painter_at(rect).rect_filled(rect, 0.0, c);
++            }
++            None => paint_dots(ui, rect, app.session.prefs().interface.show_canvas_dots),
+         }
+-        None => paint_dots(ui, rect, app.session.prefs().interface.show_canvas_dots),
+     }
+     let border = app.session.prefs().interface.canvas_border;
+     // Default-mode Crop changes its camera during input. Defer its image until the new camera
+@@ -3507,14 +3518,23 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
+         } else {
+             Vec::new()
+         };
+-        let drop_shadow = drop_shadow && !beyond && !app.ui.view.pattern_preview;
++        let drop_shadow = drop_shadow && !beyond && !app.ui.view.pattern_preview && !crate::overlay::capture_clean();
++        // A host outside the app may take over the document rectangle (`overlay.rs`): it then draws
++        // in place of the document composite, through the same camera, so pan/zoom/rotation follow.
++        let taken_over = crate::overlay::is_active() && crate::overlay::paint(&ctx, &painter, rect, xf.doc_rect(doc.bounds()));
++        if crate::overlay::wants_repaint() {
++            // The host pushes frames on its own clock; keep the app's frames coming.
++            ctx.request_repaint();
++        }
+         // Live adjustment previews on big documents use a downsampled proxy (see proxy.rs), unless
+         // Preferences › Performance › Low Resolution Previews is off.
+         let mut on_gpu = false;
+         // A flipped or pixel-aspect-corrected view draws through the CPU path (the GPU canvas shader
+         // has no mirroring or non-square pixels). Rotation stays on the GPU: it is a view uniform.
+         let gpu_ok = crate::gpu_canvas::gpu_view_ok(flip, view.rotation, aspect);
+-        if app.gpu.is_some()
++        if taken_over {
++            // The host's picture is on screen; no document composite, checkerboard or shadow.
++        } else if app.gpu.is_some()
+             && gpu_ok
+             && let Some((k, key, preview_size)) = ensure_adjust_proxy(app, idx, render_zoom)
+                 .or_else(|| ensure_filter_preview(app, idx, &ctx))
+diff --git a/crates/ui-egui/src/cjk_fonts.rs b/crates/ui-egui/src/cjk_fonts.rs
+index e4c2739..73fa291 100644
+--- a/crates/ui-egui/src/cjk_fonts.rs
++++ b/crates/ui-egui/src/cjk_fonts.rs
+@@ -349,15 +349,8 @@ fn baseline_offset(face: (f32, f32, f32), primary: (f32, f32, f32)) -> f32 {
+ }
+ 
+ /// Registers `name` at the lowest priority in every font family.
+-fn add_to_all_families(ctx: &egui::Context, name: String, mut data: FontData) {
+-    // Align to Inter, the primary of every UI family; JetBrains Mono differs by under 0.005em.
+-    let primary = ctx.fonts(|f| f.definitions().font_data.get("Inter").and_then(|p| vertical_metrics(&p.font, p.index)));
+-    if let (Some(face), Some(primary)) = (vertical_metrics(&data.font, data.index), primary) {
+-        data.tweak.y_offset_factor = baseline_offset(face, primary);
+-    }
+-    if let Some(weight) = regular_weight(&data.font, data.index) {
+-        data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", weight)]);
+-    }
++fn add_to_all_families(ctx: &egui::Context, name: String, data: FontData) {
++    let data = prepare_fallback(ctx, &name, data, active_inter_metrics(ctx));
+     let mut families: Vec<FontFamily> = ctx.fonts(|f| f.definitions().families.keys().cloned().collect());
+     for f in [FontFamily::Proportional, FontFamily::Monospace] {
+         if !families.contains(&f) {
+@@ -365,10 +358,63 @@ fn add_to_all_families(ctx: &egui::Context, name: String, mut data: FontData) {
+         }
+     }
+     let families = families.into_iter().map(|family| InsertFontFamily { family, priority: FontPriority::Lowest }).collect();
+-    crate::theme::size_ui_font(ctx, &name, &mut data);
+     ctx.add_font(FontInsert { name, data, families });
+ }
+ 
++/// Registers runtime-delivered font bytes as a UI fallback (the host's served script font).
++/// Reuses the system-font loader's baseline, weight and UI font-size treatment.
++pub(crate) fn add_ui_fallback(ctx: &egui::Context, name: String, bytes: Vec<u8>) {
++    add_to_all_families(ctx, name, FontData::from_owned(bytes));
++}
++
++/// Appends `name` to every family of `fonts`, which is about to become the active stack.
++///
++/// `Context::set_fonts` replaces the whole stack (dropping every `Context::add_font` fallback),
++/// and `Context::add_font` dedupes against the *still active* definitions, which after a language
++/// or theme rebuild still contain this name. So a rebuild must put the served fallback into the
++/// definitions it installs instead of re-adding it afterwards (see
++/// [`crate::theme::install_fonts_with`] and [`crate::served_fonts::add_ui_fonts_to`]).
++pub(crate) fn add_to_definitions(ctx: &egui::Context, fonts: &mut egui::FontDefinitions, name: String, data: FontData) {
++    let data = prepare_fallback(ctx, &name, data, definitions_inter_metrics(fonts));
++    fonts.font_data.insert(name.clone(), std::sync::Arc::new(data));
++    let mut families: Vec<FontFamily> = fonts.families.keys().cloned().collect();
++    for f in [FontFamily::Proportional, FontFamily::Monospace] {
++        if !families.contains(&f) {
++            families.push(f);
++        }
++    }
++    for family in families {
++        fonts.families.entry(family).or_default().push(name.clone());
++    }
++}
++
++/// Aligns a fallback's baseline to Inter, picks Regular weight and the UI font-size scale.
++fn prepare_fallback(ctx: &egui::Context, name: &str, mut data: FontData, primary: Option<(f32, f32, f32)>) -> FontData {
++    if let (Some(face), Some(primary)) = (vertical_metrics(&data.font, data.index), primary) {
++        data.tweak.y_offset_factor = baseline_offset(face, primary);
++    }
++    if let Some(weight) = regular_weight(&data.font, data.index) {
++        data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", weight)]);
++    }
++    crate::theme::size_ui_font(ctx, name, &mut data);
++    data
++}
++
++/// Inter's metrics from the active stack, or the bundled face before any stack is active.
++fn active_inter_metrics(ctx: &egui::Context) -> Option<(f32, f32, f32)> {
++    ctx.fonts(|f| f.definitions().font_data.get("Inter").and_then(|p| vertical_metrics(&p.font, p.index)))
++        .or_else(bundled_inter_metrics)
++}
++
++/// Inter's metrics from a stack being built (before `set_fonts` activates it).
++fn definitions_inter_metrics(fonts: &egui::FontDefinitions) -> Option<(f32, f32, f32)> {
++    fonts.font_data.get("Inter").and_then(|p| vertical_metrics(&p.font, p.index)).or_else(bundled_inter_metrics)
++}
++
++fn bundled_inter_metrics() -> Option<(f32, f32, f32)> {
++    vertical_metrics(photocraft_text::fonts::INTER_REGULAR.as_slice(), 0)
++}
++
+ /// The egui plugin that watches drawn text and loads fallback fonts on demand.
+ pub struct CjkFontPlugin(pub CjkFallback);
+ 
+diff --git a/crates/ui-egui/src/discard_ui.rs b/crates/ui-egui/src/discard_ui.rs
+index f6f654a..ea5868d 100644
+--- a/crates/ui-egui/src/discard_ui.rs
++++ b/crates/ui-egui/src/discard_ui.rs
+@@ -67,6 +67,12 @@ fn discarded(app: &PhotocraftApp, id: &str, params: &Value) -> (Option<DocId>, V
+ 
+ /// Park `id` behind a prompt if it would discard unsaved work. Returns whether it did.
+ pub fn intercept(app: &mut PhotocraftApp, id: &str, params: &Value) -> bool {
++    if crate::overlay::hosted() && reach(id).is_some() {
++        let target = params.get("document").and_then(Value::as_u64).map(|i| i as usize).or(app.session.active_index());
++        let ids: Vec<_> = app.session.documents().iter().enumerate().filter(|(i, _)| match reach(id) { Some(Reach::All) => true, Some(Reach::AllButTarget) => Some(*i) != target, _ => Some(*i) == target }).map(|(_, d)| d.doc.id.0.to_string()).collect();
++        for id in ids { crate::overlay::request_document("close", id); }
++        return true;
++    }
+     let (target, docs) = discarded(app, id, params);
+     if docs.is_empty() {
+         return false;
+diff --git a/crates/ui-egui/src/i18n/mod.rs b/crates/ui-egui/src/i18n/mod.rs
+index 0ff8a30..27b0268 100644
+--- a/crates/ui-egui/src/i18n/mod.rs
++++ b/crates/ui-egui/src/i18n/mod.rs
+@@ -23,7 +23,7 @@
+ mod catalog;
+ mod system;
+ 
+-pub use system::system_lang;
++pub use system::{set_system_tags, system_lang};
+ 
+ use std::cell::Cell;
+ use std::sync::OnceLock;
+diff --git a/crates/ui-egui/src/i18n/system.rs b/crates/ui-egui/src/i18n/system.rs
+index 25cc9fe..cf14957 100644
+--- a/crates/ui-egui/src/i18n/system.rs
++++ b/crates/ui-egui/src/i18n/system.rs
+@@ -2,31 +2,71 @@
+ 
+ use super::{Lang, lang_from_tag};
+ 
+-#[cfg(not(target_arch = "wasm32"))]
+ const MAX_SYSTEM_TAGS: usize = 64;
+-#[cfg(not(target_arch = "wasm32"))]
+ const MAX_SYSTEM_TAG_BYTES: usize = 128;
+ 
++/// Tags supplied by the platform shell (the web build's `navigator.languages`). A browser has no
++/// OS-locale API, and the shell knows the preference list before the first frame. The first
++/// injection wins: `WebRunner` is a singleton, and re-reading a changed browser language would
++/// need a page reload, as the native locale cache does.
++#[cfg(not(test))]
++static INJECTED_TAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
++
++#[cfg(test)]
++thread_local! {
++    static INJECTED_TAGS: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
++}
++
+ /// Resolve Auto against the current registry. Cache the OS's tags, rather than a language,
+ /// so matching remains separate from platform detection.
+ /// Missing or unsupported system preferences always resolve to English.
+ pub fn system_lang() -> Lang {
+     #[cfg(test)]
+     {
++        if let Some(tags) = injected_tags() {
++            return resolve(&tags);
++        }
+         TEST_SYSTEM_TAGS.with(|tags| resolve(&tags.borrow()))
+     }
+     #[cfg(not(test))]
+     {
++        if let Some(tags) = INJECTED_TAGS.get() {
++            return resolve(tags);
++        }
+         static SYSTEM: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+         resolve(SYSTEM.get_or_init(detect_system_tags))
+     }
+ }
+ 
++/// Supply the platform's preferred-language list for `auto`. Only the first call takes effect;
++/// later calls (and a list that is empty or all invalid) leave the first list in place, and an
++/// empty or unsupported list resolves to English. The web shell calls this before the editor
++/// resolves `interface.language`.
++pub fn set_system_tags(tags: Vec<String>) {
++    #[cfg(not(test))]
++    {
++        let _ = INJECTED_TAGS.set(bounded_tags(tags));
++    }
++    #[cfg(test)]
++    {
++        INJECTED_TAGS.with(|slot| {
++            let mut slot = slot.borrow_mut();
++            if slot.is_none() {
++                *slot = Some(bounded_tags(tags));
++            }
++        });
++    }
++}
++
++#[cfg(test)]
++fn injected_tags() -> Option<Vec<String>> {
++    INJECTED_TAGS.with(|slot| slot.borrow().clone())
++}
++
+ fn resolve(tags: &[String]) -> Lang {
+     tags.iter().find_map(|tag| lang_from_tag(tag)).unwrap_or(Lang::EN)
+ }
+ 
+-#[cfg(not(target_arch = "wasm32"))]
+ fn bounded_tags(tags: impl IntoIterator<Item = String>) -> Vec<String> {
+     tags.into_iter()
+         .take(MAX_SYSTEM_TAGS)
+@@ -76,10 +116,63 @@ pub(super) fn with_system_tags<R>(tags: &[&str], run: impl FnOnce() -> R) -> R {
+     run()
+ }
+ 
++/// Test-only scope for [`set_system_tags`]: clears the thread-local injection on exit, so tests
++/// can exercise different browser preference lists without leaking into one another.
++#[cfg(test)]
++fn with_injected_tags<R>(tags: &[&str], run: impl FnOnce() -> R) -> R {
++    struct Reset;
++    impl Drop for Reset {
++        fn drop(&mut self) {
++            INJECTED_TAGS.with(|slot| *slot.borrow_mut() = None);
++        }
++    }
++    let _reset = Reset;
++    set_system_tags(tags.iter().map(|tag| (*tag).to_owned()).collect());
++    run()
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn injected_browser_languages_resolve_auto() {
++        for (tags, expected) in [
++            (vec!["zh-CN", "zh"], "zh-hans"),
++            (vec!["zh-Hans"], "zh-hans"),
++            (vec!["zh-SG", "en-US"], "zh-hans"),
++            (vec!["zh-TW"], "zh-hant"),
++            (vec!["zh-HK", "zh"], "zh-hant"),
++            (vec!["zh-Hant-TW"], "zh-hant"),
++            (vec!["en-US"], "en"),
++            (vec!["sv-SE", "ar-SA"], "en"),
++            (vec!["ja-JP", "en-US"], "ja"),
++            (vec![], "en"),
++        ] {
++            with_injected_tags(&tags, || assert_eq!(Lang::from_pref("auto").code(), expected, "{tags:?}"));
++        }
++    }
++
++    #[test]
++    fn injection_is_first_write_only_and_a_manual_choice_wins() {
++        with_injected_tags(&["zh-CN"], || {
++            set_system_tags(vec!["en-US".into()]);
++            assert_eq!(Lang::from_pref("auto").code(), "zh-hans", "the first list stays in effect");
++            assert_eq!(Lang::from_pref("en").code(), "en", "an explicit preference beats the browser");
++            assert_eq!(Lang::from_pref("zh-hant").code(), "zh-hant");
++            assert_eq!(Lang::from_pref("xx-unknown").code(), "zh-hans", "unknown values follow auto");
++        });
++        with_injected_tags(&["en-US"], || assert_eq!(Lang::from_pref("auto").code(), "en"));
++    }
++
++    #[test]
++    fn injected_tags_are_bounded_and_filtered() {
++        with_injected_tags(&["  zh-CN  ", "", " ", "bad\u{0}tag", "en-US"], || {
++            assert_eq!(Lang::from_pref("auto").code(), "zh-hans");
++        });
++        with_injected_tags(&[], || assert_eq!(Lang::from_pref("auto").code(), "en", "an empty list is English"));
++    }
++
+     #[test]
+     fn system_preferences_are_negotiated_in_order() {
+         for (tags, expected) in [
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 6ea5992..6de95e0 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -258,6 +258,10 @@ pub mod zoom_levels;
+ pub mod zoom_tool;
+ pub mod zoom_window_fit;
+ 
++/// Lets a host outside the app draw the document canvas (see the module docs).
++pub mod overlay;
++pub mod overlay_workspace;
++
+ use std::collections::HashMap;
+ use std::sync::mpsc::{Receiver, Sender};
+ 
+@@ -1250,6 +1254,10 @@ impl PhotocraftApp {
+ 
+     /// Run an engine command, reporting errors in the status bar.
+     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
++        if crate::overlay::hosted() && self.session.documents().len() >= 8
++            && (id.starts_with("file.new") || matches!(id, "image.duplicate" | "file.loadFilesIntoStack" | "file.open" | "file.openAs")) {
++            return Err("工作区最多保留 8 份文档，请先关闭一份".into());
++        }
+         if let Some(result) = delete_layer_prompt::intercept(self, id, &params) {
+             return result;
+         }
+@@ -1599,6 +1607,7 @@ impl PhotocraftApp {
+     /// [`Self::open_bytes`] for a file read from `path` (File › Save writes back there; it goes
+     /// to Open Recent), when known.
+     pub(crate) fn open_bytes_from(&mut self, name: &str, bytes: &[u8], path: Option<&str>) -> Result<Vec<String>, String> {
++        if crate::overlay::hosted() && self.session.documents().len() >= 8 { return Err("工作区最多保留 8 份文档，请先关闭一份".into()); }
+         if let Some(r) = preset_files_ui::open(self, name, bytes) {
+             return r.map(|()| Vec::new());
+         }
+@@ -2235,6 +2244,10 @@ impl PhotocraftApp {
+ }
+ 
+ impl eframe::App for PhotocraftApp {
++    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
++        if overlay::capture_clean() { [0.0; 4] } else { egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32() }
++    }
++
+     fn on_exit(&mut self) {
+         if let Err(err) = tool_memory::save_on_exit(self) {
+             log::warn!("Preferences: could not save the final tool selection: {err}");
+@@ -2243,6 +2256,7 @@ impl eframe::App for PhotocraftApp {
+ 
+     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+         self.cap_frame_rate();
++        overlay::tick(self, ctx);
+         i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
+         // Caps Lock state read from the OS once per frame (see `Services::caps_lock`): the canvas
+         // cursor block needs it before the frame renders. `None` (Wayland/web) keeps `false`.
+@@ -2440,7 +2454,7 @@ impl eframe::App for PhotocraftApp {
+         }
+         let t = theme::Tokens::get(&ctx);
+         let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
+-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {
++        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(if overlay::capture_clean() { egui::Color32::TRANSPARENT } else { backdrop })).show(ui, |ui| {
+             canvas::document_area(self, ui);
+         });
+         panels::properties_window(self, &ctx);
+@@ -2496,6 +2510,7 @@ impl eframe::App for PhotocraftApp {
+             egui::Modal::new(egui::Id::new("screen-color-wait")).frame(egui::Frame::NONE).backdrop_color(egui::Color32::TRANSPARENT).show(&ctx, |_| {});
+             ctx.set_cursor_icon(egui::CursorIcon::Wait);
+         }
++        overlay::publish(self, &ctx);
+         let ui_ms = gpu_canvas::now_ms() - t0;
+         // A GPU measurement lands a frame or two after the refresh it belongs to. Refreshes
+         // carry them out, but the last refresh before the app settles has none following it, so
+@@ -3187,6 +3202,9 @@ impl PhotocraftApp {
+ #[cfg(test)]
+ mod navigator_gpu_tests;
+ 
++#[cfg(test)]
++mod overlay_tests;
++
+ #[cfg(test)]
+ mod color_swatch_tests;
+ 
+diff --git a/crates/ui-egui/src/overlay.rs b/crates/ui-egui/src/overlay.rs
+new file mode 100644
+index 0000000..165246e
+--- /dev/null
++++ b/crates/ui-egui/src/overlay.rs
+@@ -0,0 +1,398 @@
++//! External canvas takeover: let something outside PhotoCraft draw the document area.
++//!
++//! The document canvas is drawn in exactly one place ([`crate::canvas::canvas_view`]). This
++//! module is the seam that lets a host — another renderer in the same page, an offscreen
++//! producer, a `<canvas>` or `<video>` element — supply the picture for that rectangle instead
++//! of the document's own composite.
++//!
++//! Two ways in, both optional and off by default:
++//!
++//! * [`set_source`] with [`Source::Image`]: the host pushes RGBA pixels. The outer layer copies
++//!   them into an egui texture and draws it through the canvas's own [`ViewXform`], so pan, zoom,
++//!   rotation and flip all follow PhotoCraft's camera for free.
++//! * [`Source::Transparent`]: the app draws nothing in the document area — no composite, no
++//!   pasteboard, no dots — and the host covers that rectangle with its own element. The host
++//!   element goes *on top* of the app's canvas (not underneath): a browser canvas surface is
++//!   opaque, so the picture has to be composited above it. [`last_rect`] is where to put it.
++//!
++//! The seam is deliberately data-only: no UI, no engine types, no ownership of the app. A host
++//! that wants nothing to do with it never calls in, and nothing changes.
++//!
++//! Underneath, pushed pixels go through egui as an ordinary texture, not a wgpu paint callback:
++//! that keeps them working on the CPU canvas path, on WebGL2 and on WebGPU alike.
++
++use std::sync::{Arc, Mutex, PoisonError};
++
++use egui::{Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions};
++
++/// What the host wants the document rectangle to show.
++#[derive(Clone, Debug, Default)]
++pub enum Source {
++    /// Nothing: PhotoCraft draws the document as usual.
++    #[default]
++    Off,
++    /// The host paints this area itself, above the app's canvas (a browser canvas surface is
++    /// opaque, so the app leaves the rectangle empty and the host covers it).
++    Transparent,
++    /// These pixels, drawn in place of the document composite.
++    Image(Arc<Frame>),
++}
++
++/// One RGBA8 frame, top row first, already in display space (gamma-encoded, straight alpha).
++#[derive(Clone, Debug)]
++pub struct Frame {
++    pub width: u32,
++    pub height: u32,
++    /// `width * height * 4` bytes.
++    pub rgba: Vec<u8>,
++    /// Drawn into the document rectangle: `true` fills the whole canvas view; `false` keeps the
++    /// document's own aspect ratio, centred, so a fixed-size frame does not stretch on zoom.
++    pub fill: bool,
++}
++
++impl Frame {
++    /// Solid-colour frame — enough to see the seam working end to end.
++    pub fn solid(width: u32, height: u32, color: [u8; 4]) -> Self {
++        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
++        for _ in 0..width * height {
++            rgba.extend_from_slice(&color);
++        }
++        Self { width, height, rgba, fill: true }
++    }
++
++    fn to_color_image(&self) -> ColorImage {
++        let mut pixels = Vec::with_capacity((self.width * self.height) as usize);
++        for px in self.rgba.chunks_exact(4) {
++            pixels.push(Color32::from_rgba_unmultiplied(px[0], px[1], px[2], px[3]));
++        }
++        ColorImage { size: [self.width as usize, self.height as usize], pixels, source_size: egui::Vec2::new(self.width as f32, self.height as f32) }
++    }
++}
++
++/// Host-owned state, kept out of the app so the seam stays a plain function call.
++#[derive(Default)]
++struct Seam {
++    source: Source,
++    capture_clean: bool,
++    fit_requested: bool,
++    export_requested: bool,
++    export: Option<Vec<u8>>,
++    export_error: Option<String>,
++    state: String,
++    /// Bumped by the host; the app re-uploads the texture when it changes.
++    revision: u64,
++    uploaded: u64,
++    texture: Option<TextureHandle>,
++    /// What the last frame reported, for hosts that poll.
++    last_rect: Option<[f32; 4]>,
++    /// Set by the host to have the app ask for repaints while a takeover is live.
++    wants_repaint: bool,
++    /// The egui context, captured on the first painted frame. A host pushing frames from outside
++    /// needs a repaint *now*, and an idle app is otherwise never asked to draw again — asking from
++    /// inside the paint path alone would wait for a frame that never comes.
++    ctx: Option<egui::Context>,
++}
++
++static SEAM: Mutex<Option<Seam>> = Mutex::new(None);
++
++fn with_seam<R>(f: impl FnOnce(&mut Seam) -> R) -> R {
++    let mut guard = SEAM.lock().unwrap_or_else(PoisonError::into_inner);
++    f(guard.get_or_insert_with(Seam::default))
++}
++
++/// Wake the app so the next frame shows what the host just set.
++fn wake() {
++    let ctx = with_seam(|seam| seam.ctx.clone());
++    if let Some(ctx) = ctx {
++        ctx.request_repaint();
++    }
++}
++
++/// Remember the egui context on every frame, including frames that draw nothing.
++///
++/// [`wake`] can only ask for a repaint through a context, and the shell skips the rest of
++/// `logic`/`ui` while the host keeps the app hidden. A host hides the runtime right after creating
++/// it — before eframe's first frame — so a context captured only from a visible frame leaves the
++/// first [`set_presentation`] with nothing to wake: the app then stays idle until an unrelated
++/// event (a canvas resize) forces a paint.
++pub fn remember_ctx(ctx: &egui::Context) {
++    with_seam(|seam| {
++        if seam.ctx.is_none() {
++            seam.ctx = Some(ctx.clone());
++        }
++    });
++}
++
++/// Install (or replace) the frame the document area should show. Cheap to call every frame:
++/// the app only re-uploads when the revision changes.
++pub fn set_image(frame: Frame) {
++    with_seam(|seam| {
++        seam.source = Source::Image(Arc::new(frame));
++        seam.revision = seam.revision.wrapping_add(1);
++        seam.wants_repaint = true;
++    });
++    wake();
++}
++
++/// Hand the document area to the host: the app draws nothing there. The host must cover
++/// [`last_rect`] itself, on top of the app's canvas.
++pub fn set_transparent() {
++    with_seam(|seam| {
++        seam.source = Source::Transparent;
++        seam.texture = None;
++        seam.wants_repaint = true;
++    });
++    wake();
++}
++
++/// Stop the takeover; the document draws normally again.
++pub fn clear() {
++    with_seam(|seam| {
++        seam.source = Source::Off;
++        seam.texture = None;
++        seam.wants_repaint = false;
++        seam.last_rect = None;
++    });
++    wake();
++}
++
++/// Remember the app's egui context and the document rectangle, once per frame and whether or not
++/// a takeover is live. Two reasons it cannot wait for [`paint`]:
++///
++/// * the first `set_image`/`set_transparent` must be able to schedule a repaint, but an idle app
++///   is otherwise never asked to draw again;
++/// * a "cover this rectangle" host needs [`last_rect`] *before* it asks for the takeover.
++pub fn report(ctx: &egui::Context, rect: Rect) {
++    with_seam(|seam| {
++        seam.last_rect = Some([rect.left(), rect.top(), rect.width(), rect.height()]);
++        if seam.ctx.is_none() {
++            seam.ctx = Some(ctx.clone());
++        }
++    });
++}
++
++/// Is a takeover active?
++pub fn is_active() -> bool {
++    with_seam(|seam| !matches!(seam.source, Source::Off))
++}
++
++/// Whether the host asked for the area to stay blank ([`set_transparent`]).
++pub fn is_transparent() -> bool {
++    with_seam(|seam| matches!(seam.source, Source::Transparent))
++}
++
++/// Where the document area was last drawn, in egui points (`[x, y, w, h]`), for a host that
++/// needs to line its own canvas up with it.
++pub fn last_rect() -> Option<[f32; 4]> {
++    with_seam(|seam| seam.last_rect)
++}
++
++/// Should the app keep repainting? True while a takeover is live.
++pub fn wants_repaint() -> bool {
++    with_seam(|seam| seam.wants_repaint)
++}
++
++/// Draw the takeover into `rect`, in place of the document composite. Returns `true` when it
++/// handled the area, so the caller skips its own drawing.
++///
++/// `doc_rect` is the document's own on-screen rectangle, so a non-filling frame keeps the
++/// document's aspect ratio while the camera moves around it.
++pub fn paint(ctx: &egui::Context, painter: &Painter, rect: Rect, doc_rect: Rect) -> bool {
++    let (source, revision, uploaded, texture) = with_seam(|seam| (seam.source.clone(), seam.revision, seam.uploaded, seam.texture.clone()));
++
++    match source {
++        Source::Off => false,
++        Source::Transparent => true,
++        Source::Image(frame) => {
++            let needs_upload = texture.is_none() || uploaded != revision;
++            let texture = if needs_upload { upload(ctx, texture, &frame) } else { texture.unwrap_or_else(|| upload(ctx, None, &frame)) };
++            let target = if frame.fill {
++                rect
++            } else {
++                // Keep the frame's aspect inside the document's rectangle.
++                fit_aspect(doc_rect, frame.width as f32 / frame.height.max(1) as f32)
++            };
++            if target.width() > 0.0 && target.height() > 0.0 {
++                painter.image(
++                    texture.id(),
++                    target,
++                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
++                    Color32::WHITE,
++                );
++            }
++            true
++        }
++    }
++}
++
++/// Draw the frame onto `rect` with no camera mapping at all (used when the document rectangle
++/// is not meaningful, e.g. no open document).
++pub fn paint_plain(ctx: &egui::Context, painter: &Painter, rect: Rect) -> bool {
++    paint(ctx, painter, rect, rect)
++}
++
++fn upload(ctx: &egui::Context, existing: Option<TextureHandle>, frame: &Frame) -> TextureHandle {
++    let image = frame.to_color_image();
++    let options = TextureOptions::LINEAR;
++    let handle = match existing {
++        Some(mut handle) => {
++            handle.set(image, options);
++            handle
++        }
++        None => ctx.load_texture("photocraft-external-canvas", image, options),
++    };
++    let revision = with_seam(|seam| seam.revision);
++    let clone = handle.clone();
++    with_seam(move |seam| {
++        seam.texture = Some(clone);
++        seam.uploaded = revision;
++    });
++    handle
++}
++
++/// `base` shrunk to `aspect` (width / height), centred.
++fn fit_aspect(base: Rect, aspect: f32) -> Rect {
++    if !aspect.is_finite() || aspect <= 0.0 {
++        return base;
++    }
++    let base_aspect = base.width() / base.height().max(f32::EPSILON);
++    let size = if base_aspect > aspect {
++        egui::vec2(base.height() * aspect, base.height())
++    } else {
++        egui::vec2(base.width(), base.width() / aspect)
++    };
++    Rect::from_center_size(base.center(), size)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_seam_is_off_until_a_host_asks() {
++        clear();
++        assert!(!is_active());
++        assert!(!is_transparent());
++        assert!(last_rect().is_none());
++    }
++
++    #[test]
++    fn a_frame_round_trips_into_egui_colors() {
++        let frame = Frame::solid(2, 2, [10, 20, 30, 255]);
++        let image = frame.to_color_image();
++        assert_eq!(image.size, [2, 2]);
++        assert_eq!(image.pixels[0], Color32::from_rgba_unmultiplied(10, 20, 30, 255));
++    }
++
++    #[test]
++    fn transparent_mode_reports_active_without_a_texture() {
++        set_transparent();
++        assert!(is_active());
++        assert!(is_transparent());
++        clear();
++        assert!(!is_active());
++    }
++
++    #[test]
++    fn a_non_filling_frame_keeps_its_aspect() {
++        let base = Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 200.0));
++        let out = fit_aspect(base, 1.0);
++        assert!((out.width() - out.height()).abs() < 0.01);
++        assert!((out.width() - 200.0).abs() < 0.01);
++        assert!((out.center() - base.center()).length() < 0.01);
++    }
++}
++
++/// Preserve document/tools while clearing only the pasteboard for the host's backdrop.
++pub fn set_capture_clean(on: bool) {
++    with_seam(|s| { s.capture_clean = on; s.source = Source::Off; });
++    wake();
++}
++pub fn capture_clean() -> bool { with_seam(|s| s.capture_clean) }
++pub fn state() -> String { with_seam(|s| s.state.clone()) }
++pub fn request_fit() { with_seam(|s| s.fit_requested = true); wake(); }
++/// `max_side` is reserved: exports always retain source resolution (0 means unlimited).
++pub fn request_export(_max_side: u32) {
++    with_seam(|s| { s.export_requested = true; s.export = None; s.export_error = None; });
++    wake();
++}
++pub fn take_export() -> Option<Vec<u8>> { with_seam(|s| s.export.take()) }
++pub fn export_error() -> Option<String> { with_seam(|s| s.export_error.clone()) }
++
++/// Process requests on the app thread; never hold SEAM while exporting or calling the app.
++pub fn tick(app: &mut crate::PhotocraftApp, ctx: &egui::Context) {
++    let (fit, export) = with_seam(|s| {
++        s.ctx = Some(ctx.clone());
++        s.last_rect = None;
++        (std::mem::take(&mut s.fit_requested), std::mem::take(&mut s.export_requested))
++    });
++    if fit && let Some(i) = app.session.active_index() {
++        if let Some(view) = app.ui.views.get_mut(i) { view.fit_pending = true; }
++    }
++    if export {
++        let result = app.session.active().ok_or_else(|| "No active document".to_string())
++            .and_then(|st| photocraft_io::export(&st.doc, "export.png", &Default::default()).map(|r| r.bytes).map_err(|e| e.to_string()));
++        with_seam(|s| match result {
++            Ok(bytes) => s.export = Some(bytes),
++            Err(error) => s.export_error = Some(error),
++        });
++    }
++}
++
++/// State from the same UI pass that reported the document rectangle.
++pub fn publish(app: &crate::PhotocraftApp, ctx: &egui::Context) {
++    let modal = !app.ui.dialogs.is_empty() || ctx.memory(|m| m.top_modal_layer().is_some())
++        || app.camera_raw.is_some() || app.wide_angle.is_some() || app.save_options_open();
++    let operation = app.drag.is_some() || app.ui.transform.is_some() || app.ui.text_edit.is_some()
++        || app.ui.pen.is_some() || !app.ui.polygon.is_empty() || app.ui.crop_rect.is_some()
++        || app.ui.perspective_crop.is_some() || app.ui.symmetry_transform.is_some();
++    let esc_owned = modal || operation || ctx.text_edit_focused() || ctx.any_popup_open()
++        || crate::menu_nav::is_open(ctx) || crate::menu_keys::is_focused(ctx)
++        || crate::widgets::dropdown_list_open(ctx) || app.ui.palette_open
++        || app.ui.canvas_tool_menu.is_some() || app.ui.layer_menu.is_some()
++        || app.ui.brush_picker.is_some() || app.ui.stroke_editor.is_some()
++        || app.distort.gallery.is_some() || app.ui.view.screen_mode != "standard"
++        || app.session.active().is_some_and(|st| st.doc.selection.is_some());
++    let document = app.session.active();
++    let css_scale = ctx.pixels_per_point() / ctx.native_pixels_per_point().unwrap_or(1.0);
++    let document_view = document.and_then(|st| crate::canvas::ViewXform::active(app).map(|xf| {
++        let center = xf.to_screen(st.doc.size.width as f32 / 2.0, st.doc.size.height as f32 / 2.0);
++        serde_json::json!({"width": st.doc.size.width, "height": st.doc.size.height,
++            "x": center.x * css_scale, "y": center.y * css_scale, "zoom": xf.zoom * css_scale})
++    }));
++    let view_ready = app.session.active_index().and_then(|i| app.ui.views.get(i))
++        .is_some_and(|view| !view.fit_pending && !view.zoom_animating);
++    with_seam(|s| {
++        if document.is_none() { s.last_rect = None; }
++        let rect = s.last_rect.map(|r| r.map(|v| v * ctx.pixels_per_point() / ctx.native_pixels_per_point().unwrap_or(1.0)));
++        // egui points and CSS pixels normally coincide; account for custom UI scaling.
++        s.state = serde_json::json!({
++            "documents": app.session.documents().iter().map(|st| serde_json::json!({
++                "id": st.doc.id.0.to_string(), "name": st.doc.name, "revision": st.revision.saturating_sub(st.view_revision), "dirty": st.is_dirty()
++            })).collect::<Vec<_>>(),
++            "documentId": document.map(|st| st.doc.id.0.to_string()),
++            "documentName": document.map(|st| st.doc.name.clone()),
++            "docWidth": document.map(|st| st.doc.size.width),
++            "docHeight": document.map(|st| st.doc.size.height),
++            "revision": document.map(|st| st.revision.saturating_sub(st.view_revision)),
++            "dirty": document.is_some_and(|st| st.is_dirty()),
++            "rect": rect, "modal": modal, "escOwned": esc_owned,
++            "operation": operation, "documentView": document_view, "viewReady": view_ready
++        }).to_string();
++    });
++}
++
++pub fn reset() { let mut g = SEAM.lock().unwrap_or_else(PoisonError::into_inner); *g = None; }
++pub fn wake_runtime() { wake(); }
++
++static HOSTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++static VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
++static INPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
++static REQUESTS: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
++pub fn set_hosted(on: bool) { HOSTED.store(on, std::sync::atomic::Ordering::Relaxed); }
++pub fn hosted() -> bool { HOSTED.load(std::sync::atomic::Ordering::Relaxed) }
++pub fn visible() -> bool { VISIBLE.load(std::sync::atomic::Ordering::Relaxed) }
++pub fn input_enabled() -> bool { INPUT.load(std::sync::atomic::Ordering::Relaxed) }
++pub fn set_presentation(visible: bool, input: bool) { VISIBLE.store(visible, std::sync::atomic::Ordering::Relaxed); INPUT.store(input, std::sync::atomic::Ordering::Relaxed); wake(); }
++pub fn request_document(kind: &str, id: String) { REQUESTS.lock().unwrap_or_else(PoisonError::into_inner).push(serde_json::json!({"kind":kind,"id":id})); }
++pub fn take_requests() -> String { serde_json::to_string(&std::mem::take(&mut *REQUESTS.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default() }
+diff --git a/crates/ui-egui/src/overlay_tests.rs b/crates/ui-egui/src/overlay_tests.rs
+new file mode 100644
+index 0000000..acaaa9a
+--- /dev/null
++++ b/crates/ui-egui/src/overlay_tests.rs
+@@ -0,0 +1,182 @@
++//! External-canvas seam tests, on a real egui frame.
++//!
++//! `overlay::tests` covers the data path. These check the parts that only a frame can show: that
++//! a takeover makes the document area draw the host's picture, that `clear` gives it back, that
++//! `report` publishes the rectangle the app drew into, and that a push from outside wakes the loop.
++
++use crate::overlay::{self, Frame};
++
++fn frame_ready() -> egui::Context {
++    let ctx = egui::Context::default();
++    // One warm-up pass so fonts and the first texture uploads are settled.
++    let mut out = ctx.run_ui(Default::default(), |_| {});
++    out.textures_delta.clear();
++    ctx
++}
++
++/// Run one frame with `ui_fn`, returning the output with its texture deltas consumed (a real
++/// runner uploads them; a test that drops them trips epaint's debug assertion).
++fn run_frame(ctx: &egui::Context, ui_fn: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
++    let mut out = ctx.run_ui(Default::default(), ui_fn);
++    out.textures_delta.clear();
++    out
++}
++
++#[test]
++fn a_pushed_frame_paints() {
++    let ctx = frame_ready();
++    overlay::clear();
++    let area = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 200.0));
++
++    overlay::set_image(Frame::solid(8, 8, [191, 75, 40, 255]));
++    let out = run_frame(&ctx, |ui| {
++        let painter = ui.painter_at(area);
++        assert!(overlay::paint(ui.ctx(), &painter, area, area), "a takeover handles the area");
++    });
++    assert!(!out.shapes.is_empty(), "something was painted");
++    overlay::clear();
++}
++
++#[test]
++fn clearing_gives_the_area_back() {
++    let ctx = frame_ready();
++    overlay::set_image(Frame::solid(4, 4, [1, 2, 3, 255]));
++    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(50.0, 50.0));
++    run_frame(&ctx, |ui| {
++        let painter = ui.painter_at(area);
++        assert!(overlay::paint(ui.ctx(), &painter, area, area));
++    });
++    overlay::clear();
++    run_frame(&ctx, |ui| {
++        let painter = ui.painter_at(area);
++        assert!(!overlay::paint(ui.ctx(), &painter, area, area), "no takeover, nothing painted");
++    });
++    assert!(!overlay::is_active());
++}
++
++#[test]
++fn transparent_mode_handles_the_area_without_a_texture() {
++    let ctx = frame_ready();
++    overlay::set_transparent();
++    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(80.0, 60.0));
++    run_frame(&ctx, |ui| {
++        let painter = ui.painter_at(area);
++        // Handled: the caller skips the document composite. Nothing is drawn by the seam itself.
++        assert!(overlay::paint(ui.ctx(), &painter, area, area));
++    });
++    assert!(overlay::is_transparent());
++    overlay::clear();
++}
++
++#[test]
++fn the_area_is_reported_before_any_takeover() {
++    // A host that covers the rectangle needs it *before* asking, so `report` must not depend on a
++    // takeover being live.
++    overlay::clear();
++    let ctx = egui::Context::default();
++    let area = egui::Rect::from_min_size(egui::pos2(5.0, 7.0), egui::vec2(120.0, 90.0));
++    overlay::report(&ctx, area);
++    assert_eq!(overlay::last_rect(), Some([5.0, 7.0, 120.0, 90.0]));
++    assert!(!overlay::is_active());
++}
++
++
++#[test]
++fn capture_clean_keeps_document_ownership_and_transparent_clear() {
++    use eframe::App;
++    overlay::clear();
++    overlay::set_transparent();
++    overlay::set_capture_clean(true);
++    assert!(!overlay::is_active(), "capture must not replace the document composite");
++    let app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
++    assert_eq!(app.clear_color(&Default::default()), [0.0; 4]);
++    overlay::set_capture_clean(false);
++    assert!(app.clear_color(&Default::default())[3] > 0.0);
++}
++
++#[test]
++fn state_fit_and_export_requests_use_the_active_document_without_advancing_revision() {
++    overlay::clear();
++    let ctx = egui::Context::default();
++    let mut session = photocraft_engine::Session::new();
++    session.execute("file.new", serde_json::json!({"width": 8, "height": 6})).unwrap();
++    let mut app = crate::PhotocraftApp::new(session, Default::default());
++    app.sync_views();
++    app.ui.views[0].fit_pending = false;
++    let revision = app.session.active().unwrap().revision;
++    overlay::request_fit();
++    overlay::request_export(1); // preview limit must not downsample the exported source.
++    overlay::tick(&mut app, &ctx);
++    assert!(app.ui.views[0].fit_pending);
++    let bytes = overlay::take_export().unwrap();
++    assert_eq!(&bytes[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
++    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 8);
++    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 6);
++    assert!(overlay::take_export().is_none(), "export is consumed once");
++    assert!(overlay::export_error().is_none());
++    assert_eq!(app.session.active().unwrap().revision, revision);
++    overlay::report(&ctx, egui::Rect::from_min_size(egui::pos2(5.0, 6.0), egui::vec2(120.0, 90.0)));
++    overlay::publish(&app, &ctx);
++    let state: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    assert_eq!(state["docWidth"], 8);
++    assert_eq!(state["docHeight"], 6);
++    assert_eq!(state["rect"], serde_json::json!([5.0, 6.0, 120.0, 90.0]));
++    assert_eq!(state["escOwned"], false);
++    app.ui.crop_rect = Some([0.0, 0.0, 4.0, 3.0]);
++    overlay::publish(&app, &ctx);
++    let state: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    assert_eq!(state["escOwned"], true);
++    assert_eq!(state["operation"], true);
++}
++
++#[test]
++fn closing_the_last_document_clears_rect_and_export_failure_is_recoverable() {
++    overlay::clear();
++    let ctx = egui::Context::default();
++    let mut app = crate::PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
++    overlay::report(&ctx, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)));
++    overlay::publish(&app, &ctx);
++    let state: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    assert!(state["documentId"].is_null());
++    assert!(state["rect"].is_null());
++    overlay::request_export(0);
++    overlay::tick(&mut app, &ctx);
++    assert!(overlay::export_error().is_some());
++    app.session.execute("file.new", serde_json::json!({"width": 2, "height": 2})).unwrap();
++    overlay::request_export(0);
++    overlay::tick(&mut app, &ctx);
++    assert!(overlay::export_error().is_none());
++    assert!(overlay::take_export().is_some());
++}
++
++#[test]
++fn published_document_camera_changes_when_the_viewport_rectangle_does_not() {
++    overlay::clear();
++    let ctx = egui::Context::default();
++    let mut session = photocraft_engine::Session::new();
++    session.execute("file.new", serde_json::json!({"width": 40, "height": 30})).unwrap();
++    let mut app = crate::PhotocraftApp::new(session, Default::default());
++    app.sync_views();
++    let rect = egui::Rect::from_min_size(egui::pos2(5.0, 6.0), egui::vec2(400.0, 300.0));
++    app.last_canvas_rect = rect;
++    app.ui.views[0].fit_pending = false;
++    app.ui.views[0].center = [20.0, 15.0];
++    app.ui.views[0].zoom = 2.0 * app.canvas_ppp();
++    overlay::report(&ctx, rect);
++    overlay::publish(&app, &ctx);
++    let before: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    app.ui.views[0].center[0] += 10.0;
++    app.ui.views[0].zoom *= 2.0;
++    overlay::publish(&app, &ctx);
++    let after: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    assert_eq!(before["rect"], after["rect"]);
++    assert_eq!(after["documentView"]["width"], 40);
++    assert_eq!(after["documentView"]["height"], 30);
++    assert_eq!(after["documentView"]["zoom"].as_f64().unwrap(), before["documentView"]["zoom"].as_f64().unwrap() * 2.0);
++    assert!(after["documentView"]["x"].as_f64().unwrap() < before["documentView"]["x"].as_f64().unwrap());
++    assert_eq!(after["viewReady"], true);
++    app.ui.views[0].fit_pending = true;
++    overlay::publish(&app, &ctx);
++    let waiting: serde_json::Value = serde_json::from_str(&overlay::state()).unwrap();
++    assert_eq!(waiting["viewReady"], false);
++}
+diff --git a/crates/ui-egui/src/overlay_workspace.rs b/crates/ui-egui/src/overlay_workspace.rs
+new file mode 100644
+index 0000000..ba15f2c
+--- /dev/null
++++ b/crates/ui-egui/src/overlay_workspace.rs
+@@ -0,0 +1,60 @@
++//! Document operations shared by the explicit web handle and non-rendering tests.
++use crate::PhotocraftApp;
++pub fn list(app: &PhotocraftApp) -> String {
++    serde_json::json!({"documents": app.session.documents().iter().map(|st| serde_json::json!({
++        "id": st.doc.id.0.to_string(), "name": st.doc.name, "revision": st.revision.saturating_sub(st.view_revision), "dirty": st.is_dirty()
++    })).collect::<Vec<_>>(), "documentId":app.session.active().map(|st|st.doc.id.0.to_string())}).to_string()
++}
++pub fn open(app: &mut PhotocraftApp, name: &str, bytes: &[u8]) -> Result<String, String> {
++    if app.session.documents().len() >= 8 { return Err("工作区最多保留 8 份文档，请先关闭一份".into()); }
++    let imported = photocraft_io::import_with_options(name, bytes, &Default::default()).map_err(|e| e.to_string())?;
++    let mut doc = imported.document; doc.name = name.into();
++    let index = app.session.add_document(doc, None); app.sync_views();
++    Ok(app.session.documents()[index].doc.id.0.to_string())
++}
++pub fn activate(app: &mut PhotocraftApp, id: &str) -> Result<(), String> {
++    let i = app.session.documents().iter().position(|d| d.doc.id.0.to_string() == id).ok_or("Document is closed")?;
++    app.session.set_active(i); app.sync_views(); Ok(())
++}
++pub fn close(app: &mut PhotocraftApp, id: &str) -> Result<(), String> {
++    let i = app.session.documents().iter().position(|d| d.doc.id.0.to_string() == id).ok_or("Document is closed")?;
++    let active = app.session.active_index() == Some(i);
++    drop(app.session.close(i)); app.sync_views();
++    if active && !app.session.documents().is_empty() { app.session.set_active(i.saturating_sub(1).min(app.session.documents().len()-1)); }
++    Ok(())
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn app() -> PhotocraftApp { PhotocraftApp::new(photocraft_engine::Session::new(), Default::default()) }
++    fn png() -> Vec<u8> {
++        let mut a = app(); a.session.execute("file.new", serde_json::json!({"width":2,"height":2})).unwrap();
++        photocraft_io::export(&a.session.active().unwrap().doc, "x.png", &Default::default()).unwrap().bytes
++    }
++    #[test]
++    fn workspace_operations_keep_views_and_failed_open_is_atomic() {
++        let mut a = app(); let png = png(); let first = open(&mut a,"same.png",&png).unwrap();
++        a.ui.views[0].zoom = 2.5;
++        let second = open(&mut a,"same.png",&png).unwrap(); assert_ne!(first,second);
++        assert!(open(&mut a,"broken.png",b"broken").is_err()); assert_eq!(a.session.documents().len(),2);
++        assert_eq!(a.session.active().unwrap().doc.id.0.to_string(),second);
++        activate(&mut a,&first).unwrap(); assert_eq!(a.ui.views[0].zoom,2.5);
++        close(&mut a,&second).unwrap(); assert_eq!(a.ui.views[0].zoom,2.5);
++        assert!(activate(&mut a,&second).is_err());
++        let project=photocraft_io::export(&a.session.active().unwrap().doc,"x.pcraft",&Default::default()).unwrap();
++        assert!(!project.bytes.is_empty());
++        close(&mut a,&first).unwrap(); assert!(a.session.active().is_none());
++        let reopened=open(&mut a,"same.png",&png).unwrap(); assert_ne!(first,reopened);
++    }
++    #[test]
++    fn capacity_rejects_without_evicting_local_history() {
++        let mut a=app(); let png=png();
++        for _ in 0..8 { open(&mut a,"same.png",&png).unwrap(); }
++        let before=list(&a);
++        crate::overlay::set_hosted(true);
++        assert!(a.run("file.new", serde_json::json!({"width":2,"height":2})).is_err());
++        assert!(a.run("image.duplicate", serde_json::json!({})).is_err());
++        crate::overlay::set_hosted(false);
++        assert!(open(&mut a,"ninth.png",&png).is_err()); assert_eq!(before,list(&a));
++    }
++}
+diff --git a/crates/ui-egui/src/served_fonts.rs b/crates/ui-egui/src/served_fonts.rs
+index b7ae085..37c7640 100644
+--- a/crates/ui-egui/src/served_fonts.rs
++++ b/crates/ui-egui/src/served_fonts.rs
+@@ -2,7 +2,7 @@
+ //! see `photocraft_text::served`): reading the manifest, the families to fetch, and installing
+ //! what arrived, which registers the files and re-renders the type layers drawn without them.
+ 
+-use std::sync::{Mutex, PoisonError};
++use std::sync::{Arc, Mutex, PoisonError};
+ 
+ use photocraft_doc::{DocId, LayerContent, LayerId, TextLayer};
+ pub use photocraft_text::served::{ServedFont, add_families, add_fonts, is_relative_path, parse_manifest, request_for_languages, take_requests};
+@@ -12,6 +12,58 @@ use crate::PhotocraftApp;
+ /// Layers whose document was busy with a background job when their font arrived.
+ static PENDING: Mutex<Vec<(DocId, LayerId)>> = Mutex::new(Vec::new());
+ 
++/// Served script fallback fonts that arrived, kept as bytes: `Context::set_fonts` (a language or
++/// theme change) replaces the whole UI stack and would otherwise drop them.
++static UI_FALLBACKS: Mutex<Vec<(String, Arc<Vec<u8>>)>> = Mutex::new(Vec::new());
++
++/// Name of a served family in the UI font stack.
++fn ui_font_name(family: &str) -> String {
++    format!("served-ui-{family}")
++}
++
++/// Registers delivered fonts that are a served script fallback as UI fallbacks: immediately, when
++/// the font covers the interface language, and after every later UI font-stack rebuild.
++/// Returns whether a family was stored for the first time.
++pub fn install_ui_delivered(ctx: &egui::Context, delivered: &[(String, Vec<u8>)]) -> bool {
++    let fallbacks = photocraft_text::served::script_fallback_families();
++    let mut added = false;
++    {
++        let mut stored = UI_FALLBACKS.lock().unwrap_or_else(PoisonError::into_inner);
++        for (family, bytes) in delivered {
++            if fallbacks.contains(family) && !stored.iter().any(|(have, _)| have == family) {
++                stored.push((family.clone(), Arc::new(bytes.clone())));
++                added = true;
++            }
++        }
++    }
++    if added {
++        install_ui_fonts(ctx);
++    }
++    added
++}
++
++/// Registers every stored served script fallback at the lowest priority in every UI family.
++/// Call this when a font arrives; a stack rebuild uses [`add_ui_fonts_to`] instead.
++pub fn install_ui_fonts(ctx: &egui::Context) {
++    let stored: Vec<(String, Arc<Vec<u8>>)> = UI_FALLBACKS.lock().unwrap_or_else(PoisonError::into_inner).clone();
++    for (family, bytes) in stored {
++        crate::cjk_fonts::add_ui_fallback(ctx, ui_font_name(&family), bytes.as_ref().clone());
++    }
++}
++
++/// Adds every stored served script fallback to `fonts` before `Context::set_fonts` installs it.
++///
++/// A rebuild cannot re-add them afterwards: `set_fonts` drops fonts added with `Context::add_font`
++/// and `add_font` also skips a name the still-active (previous) stack already contains. Latin keeps
++/// Inter because the face is appended last in every family.
++pub(crate) fn add_ui_fonts_to(ctx: &egui::Context, fonts: &mut egui::FontDefinitions) {
++    let stored: Vec<(String, Arc<Vec<u8>>)> = UI_FALLBACKS.lock().unwrap_or_else(PoisonError::into_inner).clone();
++    for (family, bytes) in stored {
++        let data = egui::FontData::from_owned(bytes.as_ref().clone());
++        crate::cjk_fonts::add_to_definitions(ctx, fonts, ui_font_name(&family), data);
++    }
++}
++
+ /// Registers delivered font files (`(family, bytes)`, the family as the manifest lists it) and
+ /// re-renders the type layers that use those families, or whose text falls back to them (a script
+ /// fallback, e.g. Arabic set in Inter), and show our own layout. A PSD layer still
+@@ -89,4 +141,57 @@ mod tests {
+         assert!(!redraws_for(&layer("hello"), &[thai.into()]));
+         assert!(redraws_for(&layer("hello"), &["Inter".into()]), "and a layer still redraws for its own family");
+     }
++
++    /// The real host font, when this checkout has it (the pinned-source cache keeps the fork's
++    /// `client/` five directories up), or any file named by `PHOTOCRAFT_TEST_NOTOSANS`.
++    fn noto_sans_sc() -> Option<Vec<u8>> {
++        let path = std::env::var_os("PHOTOCRAFT_TEST_NOTOSANS").map(std::path::PathBuf::from).unwrap_or_else(|| {
++            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../../../client/web/frontend/public/assets/fonts/NotoSansSC-Regular.otf")
++        });
++        match std::fs::read(&path) {
++            Ok(bytes) => Some(bytes),
++            Err(e) => {
++                eprintln!("skipping the served-font UI test: {}: {e}", path.display());
++                None
++            }
++        }
++    }
++
++    fn has_chinese(ctx: &egui::Context) -> bool {
++        // `set_fonts` and `add_font` land at the start of the next pass.
++        for _ in 0..2 {
++            ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
++        }
++        ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(12.0), "中文"))
++    }
++
++    /// D5/3.1/3.3: the host's Noto Sans SC reaches the UI as a lowest-priority fallback, and
++    /// language changes plus a theme rebuild keep it (they all re-run `install_fonts`, which
++    /// calls `Context::set_fonts`). Also proves egui rasterizes the CFF/OTF file.
++    #[test]
++    fn served_chinese_font_draws_the_ui_and_survives_stack_rebuilds() {
++        let Some(bytes) = noto_sans_sc() else { return };
++        let family = "Noto Sans SC";
++        photocraft_text::served::add_fonts(&parse_manifest(&format!("{family} | Regular | fonts/NotoSansSC-Regular.otf | Hans,Hant,Jpan\n")).0);
++        let ctx = egui::Context::default();
++        crate::theme::install_fonts(&ctx);
++        // A font arrives during a frame (`WebShell::logic`), so the active stack exists.
++        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
++        assert!(install_ui_delivered(&ctx, &[(family.into(), bytes)]), "a script fallback is stored");
++        assert!(has_chinese(&ctx), "has_glyphs(\"中文\")");
++        for code in ["zh-hans", "en", "zh-hans"] {
++            crate::i18n::sync_context(&ctx, code);
++            assert!(has_chinese(&ctx), "Chinese glyphs after switching to {code}");
++        }
++        crate::theme::install_fonts(&ctx);
++        assert!(has_chinese(&ctx), "Chinese glyphs after a font-stack rebuild");
++        let definitions = ctx.fonts(|f| f.definitions().clone());
++        let name = ui_font_name(family);
++        for (family, stack) in &definitions.families {
++            assert_eq!(stack.last(), Some(&name), "{family:?}: the served font stays the last fallback");
++        }
++        assert_eq!(definitions.families[&egui::FontFamily::Proportional].first().map(String::as_str), Some("Inter"));
++        // A repeat delivery is ignored: the bytes and the stack entry stay single.
++        assert!(!install_ui_delivered(&ctx, &[(family.into(), Vec::new())]));
++    }
+ }
+diff --git a/crates/ui-egui/src/theme.rs b/crates/ui-egui/src/theme.rs
+index d637f19..fee3d96 100644
+--- a/crates/ui-egui/src/theme.rs
++++ b/crates/ui-egui/src/theme.rs
+@@ -883,6 +883,11 @@ pub fn install_fonts_with(ctx: &egui::Context, cjk: crate::cjk_fonts::Sources) {
+     for (name, data) in &mut fonts.font_data {
+         size_ui_font(ctx, name, Arc::make_mut(data));
+     }
++    // Host-served script fallbacks (D5) belong to the stack installed here: `set_fonts` drops
++    // every `Context::add_font` entry, and re-adding them right after a rebuild is skipped
++    // because `add_font` dedupes against the still-active previous stack. `install_ui_fonts`
++    // handles fonts arriving between rebuilds; both use the same appended-last fallback name.
++    crate::served_fonts::add_ui_fonts_to(ctx, &mut fonts);
+     ctx.set_fonts(fonts);
+     // egui keeps the first plugin of a type, so a re-install (language change) resets the
+     // existing one. The new definitions land next pass: the plugin must not rescale before then.

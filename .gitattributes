@@ -1,0 +1,2 @@
+# Unified diff context lines require a single-space prefix, including empty lines.
+extensions/photocraft/web/patch/*.patch -whitespace

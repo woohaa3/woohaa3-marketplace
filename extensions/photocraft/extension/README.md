@@ -32,9 +32,10 @@ WASM 预算由扩展构建检查（raw 30 MB / gzip 13 MB）。构建同时把�
 | --- | --- |
 | `extension/browser-dist/` | 浏览器 artifact（宿主发布目录与开发者模式重登记） |
 | `extension/dist/backend.js` | 站点后端工厂（`createPhotocraftBackendDefinition`） |
-| `client/extensions/photocraft/` | 公开客户端自带的预构建安装单元（`build-extension.mjs`） |
+| `marketplace/.local/photocraft/` | 本地预构建安装单元（`build-extension.mjs`，不入库） |
 
-可用 `--outdir <目录>` 改变预构建输出位置。源码工作区不在扩展扫描根，父子仓不会重复登记。
+可用 `--outdir <目录>` 改变预构建输出位置。公开客户端不再内置本扩展；本地安装单元只用于
+`WOOHAA3_EXTENSION_DIRS` 或手工验证。源码工作区不在扩展扫描根，父子仓不会重复登记。
 
 ## 开发者模式热重载
 
@@ -50,7 +51,7 @@ pnpm dev --dev-source marketplace/extensions/photocraft/extension
 ```
 
 `browser-dist/` 变化后，宿主重新登记 artifact 并**原地重装扩展实例**：不刷新页面、不重建画布
-scope、不重启宿主。开发者目录不签名、不写 `installations.json`、优先级高于受管与内置版本。
+scope、不重启宿主。开发者目录不签名、不写 `installations.json`、优先级高于受管版本。
 
 **后端当前仍需重启**：本扩展声明的是站点 `backend` 工厂，而开发者模式的后端热切换只覆盖
 `hostPlugin` 扩展、且监听的是 `backend-dist/`；`dist/backend.js` 变化不会换掉已激活的定义。
@@ -67,16 +68,16 @@ node client/scripts/pack-extension.mjs marketplace/extensions/photocraft/extensi
 ```
 
 资产名必须是 `photocraft-<version>.wxt`，发布到本仓库的 GitHub Release；客户端
-`github-release` 来源按摘要、签名、受管预检安装。当前受管安装的站点后端扩展没有运行期覆盖入口，
-首次安装后需要重启宿主才生效（与内置预构建包的行为一致）。
+`github-release` 来源按摘要、签名、受管预检安装。站点后端扩展没有运行期覆盖入口，首次安装后需要
+重启宿主才生效。
 
 ## 运行时边界
 
 手动安装预构建包时，将 tgz 解压至任一扩展根的 `photocraft/` 子目录（去掉 tar 中的 `package/` 前缀），
 并通过 `WOOHAA3_EXTENSION_DIRS` 显式提供扩展根。产物自带 `dist/backend.js`、`browser-dist/`、声明和
 许可证，不需要安装运行时依赖，也不需要工作区源码。停用扩展将移除普通页面贡献和工程格式提供者；
-已有本地文档仅保留下载/关闭的恢复界面，最后一份关闭后释放 owner。公开客户端默认携带并启用此预构建
-扩展，独立启动也可双击图片进入编辑。
+已有本地文档仅保留下载/关闭的恢复界面，最后一份关闭后释放 owner。公开客户端不再内置本扩展：
+从市场安装，或用 `WOOHAA3_EXTENSION_DIRS` 指向本地安装单元后，按插件开关启停。
 
 后端默认使用有界进程内核验。可选环境变量 `WOOHAA3_PROJECT_VERIFIER_PATH` 只由本扩展读取，必须为
 原生核验工具的绝对可执行路径；包含嵌入智能对象的工程仍要求原生全树核验。当前聚焦编辑应用结果是

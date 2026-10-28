@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "extensions": {
+    "photocraft": {
+      "name": "PhotoCraft 图片编辑",
+      "description": "图片编辑、工程格式核验与 PNG 写回；工程文件与图层在画布内直接打开。",
+      "icon": "media",
+      "hotReload": true
+    },
+    "hello-marketplace": {
+      "name": "Hello Marketplace",
+      "description": "最小市场示例扩展：只有一个前端面板，用来验证安装、启停与发布目录。",
+      "icon": "generation",
+      "hotReload": true
+    }
+  }
+}

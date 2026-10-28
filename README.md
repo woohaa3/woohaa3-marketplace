@@ -81,6 +81,32 @@ extensions:
 
 设置改完即热重载，随后在「设置 → 插件」里搜索并安装。
 
+## 市场目录：`catalog.json`
+
+Release 资产只带得出 `extensionId`、版本与摘要；客户端卡片上的人可读名称、描述、图标来自
+仓库根目录的 `catalog.json`（可选）。缺失、无权限或形状不对时，客户端退回
+`owner/repo@tag` 与 Release 标题，不影响搜索与安装：
+
+```json
+{
+  "schemaVersion": 1,
+  "extensions": {
+    "photocraft": {
+      "name": "PhotoCraft 图片编辑",
+      "description": "图片编辑、工程格式核验与 PNG 写回。",
+      "icon": "media",
+      "hotReload": true
+    }
+  }
+}
+```
+
+- `name` / `description` / `icon` 只用于市场展示；安装、摘要与签名校验都不读这里。
+- `icon` 取客户端语义图标名（`media` / `provider` / `generation` / `prompt` …）或
+  `/plugin-icons/` 下的品牌图形路径；未知值回退通用插件图标。
+- `hotReload` 声明安装后是否无需重启；缺省时界面不显示该标签（不猜测）。
+- 新增扩展时补一条；目录与 Release 的版本无关，改目录不需要重新发布 `.wxt`。
+
 ## 发布一个新版本
 
 打包工具链在客户端仓里，不在这里复制一份（在父仓根目录执行，`client` 是它的子模块）：
@@ -113,6 +139,7 @@ gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hel
 
 | 路径 | 内容 |
 | --- | --- |
+| `catalog.json` | 市场目录：名称、描述、图标、`hotReload`（只影响展示） |
 | `extensions/<id>/` | 扩展源码；`extension.json` 声明、`src/frontend/` 浏览器入口 |
 | `extensions/<id>/`（多包） | 复杂扩展可自带 `pnpm-workspace.yaml`；此时可加载包放在 `extension/`，其余包是它的构建依赖（见 `photocraft`） |
 | `.gitignore` | 构建产物（`browser-dist/`、`backend-dist/`）不入库，发布只走 Release 资产 |

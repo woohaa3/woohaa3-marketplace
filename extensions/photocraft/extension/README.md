@@ -64,17 +64,17 @@ scope、不重启宿主。开发者目录不签名、不写 `installations.json`
 ```sh
 node client/scripts/pack-extension.mjs marketplace/extensions/photocraft/extension \
   --key <ed25519私钥.pem> \
-  --out photocraft-0.1.0.wxt
+  --out photocraft-0.1.1.wxt
 ```
 
 资产名必须是 `photocraft-<version>.wxt`，发布到本仓库的 GitHub Release；客户端
-`github-release` 来源按摘要、签名、受管预检安装。站点后端扩展没有运行期覆盖入口，首次安装后需要
-重启宿主才生效。
+`github-release` 来源按摘要、签名、受管预检安装。本扩展走 `hostPlugin`，安装后可热装载；站点
+首次启用需要提交一次空配置（`configVersion`），状态才会从 `configuring` 变为 `active`。
 
 ## 运行时边界
 
 手动安装预构建包时，将 tgz 解压至任一扩展根的 `photocraft/` 子目录（去掉 tar 中的 `package/` 前缀），
-并通过 `WOOHAA3_EXTENSION_DIRS` 显式提供扩展根。产物自带 `dist/backend.js`、`browser-dist/`、声明和
+并通过 `WOOHAA3_EXTENSION_DIRS` 显式提供扩展根。发布包自带 `backend-dist/entry.mjs`、`browser-dist/`、声明和
 许可证，不需要安装运行时依赖，也不需要工作区源码。停用扩展将移除普通页面贡献和工程格式提供者；
 已有本地文档仅保留下载/关闭的恢复界面，最后一份关闭后释放 owner。公开客户端不再内置本扩展：
 从市场安装，或用 `WOOHAA3_EXTENSION_DIRS` 指向本地安装单元后，按插件开关启停。

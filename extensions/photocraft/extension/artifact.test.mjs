@@ -17,8 +17,8 @@ test('installed artifact loads without repository source or node_modules and own
     }
     await mkdir(dir, { recursive: true });
     await mkdir(path.join(sandbox, 'web/extensions'), { recursive: true });
-    // 本测试验证的是**本包构建出的安装物**；预构建安装单元由 build-extension.mjs 在 client 仓生成，
-    // 不属于 marketplace 工作区。这里从本地 dist/browser-dist 组装一个同样的无源码包。
+    // 本测试验证的是**本包构建出的安装物**；本地安装单元由 build-extension.mjs 生成到
+    // marketplace/.local，不属于发布包。这里从本地 dist/browser-dist 组装一个同样的无源码包。
     const sourcePkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
     for (const file of ['extension.json', 'dist', 'browser-dist']) await cp(new URL('./' + file, import.meta.url), path.join(dir, file), { recursive: true });
     await writeFile(path.join(dir, 'package.json'), JSON.stringify({
@@ -36,12 +36,23 @@ test('installed artifact loads without repository source or node_modules and own
       assert.ok(!/\.(ts|tsx|rs|map)$/.test(file), `Unexpected source: ${file}`);
       assert.ok(!file.split(path.sep).some(x => ['src', 'node_modules'].includes(x)));
     }
-    const { createPhotocraftBackendDefinition } = await import(pathToFileURL(path.join(dir, 'dist/backend.js')));
-    let format;
-    const activation = createPhotocraftBackendDefinition().activate({ registerCapability() {}, registerMediaFormat(value) { format = value; } });
+    const { createPhotocraftPlugin } = await import(pathToFileURL(path.join(dir, 'dist/backend.js')));
+    let format, capability;
+    const disposers = [];
+    const backendPlugin = createPhotocraftPlugin();
+    await backendPlugin.apply({
+      effect(fn) {
+        const dispose = fn();
+        if (typeof dispose === 'function') disposers.push(dispose);
+        return dispose;
+      },
+      capabilities: { register(id, value) { capability = { id, value }; return () => {}; } },
+      mediaFormats: { register(value) { format = value; return () => {}; } }
+    }, {});
+    assert.equal(capability.id, 'photocraft.edit');
     assert.equal(format.contentType, 'application/vnd.woohaa.photocraft-project');
     await assert.rejects(format.validate(new Uint8Array([1]), { maxBytes: 100 }));
-    await activation.dispose();
+    for (const dispose of disposers.reverse()) await dispose();
     const manifest = JSON.parse(await readFile(path.join(dir, 'browser-dist/artifact-manifest.json')));
     for (const file of manifest.files) {
       const bytes = await readFile(path.join(dir, 'browser-dist', file.path));

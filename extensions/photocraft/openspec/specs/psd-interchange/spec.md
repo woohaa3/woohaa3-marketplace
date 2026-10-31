@@ -1,0 +1,42 @@
+# psd-interchange Specification
+
+## Purpose
+TBD - created by archiving change 2026-10-22-complete-photocraft-webui-editing. Update Purpose after archive.
+
+## Requirements
+
+### Requirement: PSD 交换 SHALL 声明逐特性兼容矩阵
+
+PSD 能力 SHALL 限于通过 fixture 的 PSD v1 RGB/U8 子集，并逐特性记录导入可编辑、导出可编辑及损失／拒绝原因。矩阵 SHALL 覆盖像素、组、像素蒙版、混合／填充、文字、调整、样式以及已接通智能对象／矢量，不能将未接通类型宣称为可编辑支持。
+
+#### Scenario: 导入支持的 PSD
+- **WHEN** PSD 全部内容落在当前已验证子集内并通过预检
+- **THEN** 作为可编辑候选文档打开，受支持结构及效果在 pcraft 保存重开和 PSD 再导出后保持矩阵声明
+
+#### Scenario: 不支持色彩或容器
+- **WHEN** 输入为 PSB、非 RGB/U8 或损坏文件
+- **THEN** 在像素分配前尽早拒绝并说明具体原因，不仅根据扩展名或 MIME 放行
+
+### Requirement: PSD 导入损失 SHALL 由用户明确选择
+
+解析、映射和核验 SHALL 在候选文档完成；不支持的编辑结构默认 SHALL 阻止可编辑打开。源有合法合成图时，用户 SHALL 能在报告损失后明确选择扁平副本，原文档和原文件不得被修改。
+
+#### Scenario: 选择扁平副本
+- **WHEN** PSD 含不支持结构且用户确认作为扁平副本打开
+- **THEN** 新文档只含明确转换的像素内容，保留转换报告，不伪称原结构可编辑
+
+#### Scenario: 取消或解码失败
+- **WHEN** 用户拒绝转换或候选解码／预算核验失败
+- **THEN** 不替换当前文档，不发布半成品和未核验资源
+
+### Requirement: PSD 导出 SHALL 保留工程并明确转换范围
+
+导出 SHALL 从冻结修订生成损失报告，默认保留矩阵内的可编辑结构；不能表示的内容 SHALL 阻止默认导出。只有用户明确选择才可将列明内容栅格化为导出副本。PSD 文件交付 SHALL 不覆盖 pcraft 保存基线。
+
+#### Scenario: 导出可编辑 PSD
+- **WHEN** 文档处于可导出状态且全部内容受支持
+- **THEN** 同修订的 PSD 经文件端口交付，原工程和撤销历史保持不变，真实 Photoshop fixture 可继续编辑声明支持的结构
+
+#### Scenario: 有损副本或交付失败
+- **WHEN** 用户选择列明的栅格化副本，或文件交付失败
+- **THEN** 转换仅影响输出副本；失败保留文档并允许重试，不清除工程未保存状态

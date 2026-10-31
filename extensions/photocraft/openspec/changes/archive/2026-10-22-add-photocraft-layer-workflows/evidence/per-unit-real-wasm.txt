@@ -1,0 +1,128 @@
+ok   U57 create keeps stops
+ok   U57 create keeps transparency pct
+ok   U57 create keeps scale
+ok   U57 create keeps reverse/dither
+ok   U57 create is one step
+ok   U57 preview has pixels
+ok   U58 link
+ok   U58 linkGroup set
+ok   U58 label
+ok   U58 selectLinkedLayers
+ok   U58 stampVisible
+ok   U58 stampDown
+ok   U58 reverse
+ok   U58 viaCut
+ok   U58 viaCut one undo step
+ok   U58 layerFromBackground
+ok   U58 backgroundFromLayer
+ok   U59 edit.pasteSpecial.pasteInto adds one layer
+ok   U59 edit.pasteSpecial.pasteInto changes content
+ok   U59 edit.pasteSpecial.pasteInto builds a mask
+ok   U59 edit.pasteSpecial.pasteInto keeps clipboard
+ok   U59 edit.pasteSpecial.pasteInto one undo restores
+ok   U59 edit.pasteSpecial.pasteInto requires a selection
+ok   U59 edit.pasteSpecial.pasteInto region target
+ok   U59 edit.pasteSpecial.pasteOutside adds one layer
+ok   U59 edit.pasteSpecial.pasteOutside changes content
+ok   U59 edit.pasteSpecial.pasteOutside builds a mask
+ok   U59 edit.pasteSpecial.pasteOutside keeps clipboard
+ok   U59 edit.pasteSpecial.pasteOutside one undo restores
+ok   U59 edit.pasteSpecial.pasteOutside requires a selection
+ok   U59 edit.pasteSpecial.pasteOutside region target
+ok   U61 style added via draft
+ok   U61 copyStyle keeps document
+ok   U61 pasteStyle
+ok   U61 pasted effects present
+ok   U61 scaleEffects default scale is a no-op
+ok   U61 scaleEffects 150%
+ok   U61 scaleEffects rejects null
+ok   U61 transferEffects
+ok   U61 rejects {"from":24,"to":9999,"copy":true}
+ok   U61 rejects {"from":24,"to":24,"copy":true}
+ok   U61 rejects {"from":24,"to":26,"effect":99}
+ok   U61 rejects {"from":26,"to":26,"copy":true}
+ok   U61 rejected transfers keep effects
+ok   U61 defaultFor returns params
+ok   U61 defaultFor starts as factory
+ok   U61 makeDefault is preference only
+ok   U61 defaultFor reads the user default
+ok   U61 defaultFor rejects unknown kind
+ok   U61 createLayer
+ok   U61 rasterize layer style
+ok   U61 preset list is preference only
+ok   U61 preset library non-empty
+ok   U61 preset apply changes document
+ok   U61 one undo restores style
+ok   U64 comp new
+ok   U64 comp rename
+ok   U64 comp comment
+ok   U64 comp options
+ok   U64 warnings are read-only
+ok   U64 warnings shape
+ok   U64 snapshot present
+ok   U64 snapshot respects options
+ok   U64 missing layers reported
+ok   U64 apply stores last document state
+ok   U64 apply marks comp as last applied
+ok   U64 restore last document state
+ok   U64 apply is one undo step
+ok   U64 snapshot export is serializable
+ok   U64 snapshot export keeps declared fields
+ok   U64 snapshot export keeps missing layers
+ALL PASS
+ok   U57 layer.newFillLayer.solidColor creates
+ok   U57 layer.newFillLayer.gradient creates
+ok   U57 pattern without resource is refused
+ok   U57 refused pattern stays refused and adds nothing
+ok   U57 fill layers reported
+ok   U57 path creates a vector mask
+ok   U57 edit rejects path
+ok   U57 gradient info reread
+ok   U57 gradient keeps transparency pct
+ok   U57 gradient keeps scale/reverse/dither/align
+ok   U57 preview keeps document
+ok   U57 apply changes content
+ok   U57 mask survives edit
+ok   U57 one undo restores
+ok   U57 rejects single stop
+ok   U57 rejects transparency >100
+ok   U57 reopen keeps content hash
+ok   U57 reopen keeps editable fill
+ok   U60 preview has pixels
+ok   U60 preview keeps document
+ok   U60 apply changes content
+ok   U60 blend read back
+ok   U60 advancedBlending read back
+ok   U60 channel read back
+ok   U60 blendIf read back
+ok   U60 one undo restores
+ok   U60 rejects crossed endpoints
+ok   U60 rejects wrong channel count
+ok   U62 edge layer has pixels
+ok   U62 layer.matting.defringe preview pixels
+ok   U62 layer.matting.defringe preview keeps document
+ok   U62 layer.matting.defringe reports changed
+ok   U62 layer.matting.removeWhiteMatte preview pixels
+ok   U62 layer.matting.removeWhiteMatte preview keeps document
+ok   U62 layer.matting.removeWhiteMatte reports changed
+ok   U62 layer.matting.removeWhiteMatte changes pixels
+ok   U62 layer.matting.removeWhiteMatte one undo restores
+ok   U62 layer.matting.removeBlackMatte preview pixels
+ok   U62 layer.matting.removeBlackMatte preview keeps document
+ok   U62 layer.matting.removeBlackMatte reports changed
+ok   U62 layer.matting.removeBlackMatte changes pixels
+ok   U62 layer.matting.removeBlackMatte one undo restores
+ok   U62 layer.matting.colorDecontaminate preview pixels
+ok   U62 layer.matting.colorDecontaminate preview keeps document
+ok   U62 layer.matting.colorDecontaminate reports changed
+ok   U62 at least one command changed pixels
+ok   U62 rejects width 0
+ok   U62 rejects amount >100
+ok   U62 rejects fill layer
+ok   U63 by mode
+ok   U63 kind+name+onlySelected
+ok   U63 shape kind accepted
+ok   U63 filter keeps content
+ok   U63 filter keeps selection
+ok   U63 rejects unknown by
+PASS: all per-unit checks green

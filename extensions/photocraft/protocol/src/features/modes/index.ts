@@ -2,12 +2,11 @@
  * 图像模式与调色板（U45）的协议声明
  * （change: 2026-10-22-add-photocraft-image-mode-workflows，任务 1.2 / design D1/D3）。
  *
- * 与其他域一致，协议域只声明能力/命令清单；模式参数、上限、工具与导出矩阵在编辑器的本域目录
- * （`packages/editor/src/features/modes/`），模式数据与像素的权威表示在 Rust 内核
- * （`rust/crates/editor-core/src/features/modes/`）。内容身份字段见 [`content.ts`](./content.ts)。
+ * 与其他域一致，协议域只声明能力/命令清单；模式参数、上限、工具与导出矩阵由固定上游的
+ * egui/WASM 编辑器承担（源码不在本仓），模式数据与像素的权威表示也在该内核里。内容身份字段见
+ * [`content.ts`](./content.ts)。
  *
- * 能力在 P7 发布：`capabilities` 里的三个 id 与 Rust
- * `features/modes::CAPABILITIES`、`tests/fixtures/contract.json` 逐项一致，由测试锁定。
+ * 能力在 P7 发布：`capabilities` 里的三个 id 与 `fixtures/contract.json` 逐项一致，由测试锁定。
  */
 
 /** 本域能力 id（已在 P7 发布；与 Rust `features/modes::CAPABILITIES` 逐项一致）。 */

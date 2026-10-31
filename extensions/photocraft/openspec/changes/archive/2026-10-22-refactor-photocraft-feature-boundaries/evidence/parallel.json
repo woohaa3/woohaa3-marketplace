@@ -1,0 +1,28 @@
+{
+  "baseTree": "b9e2bb46957834169939a9e258a7c9cee9730936",
+  "baseCommit": "719de5826c047fda562f6b00507de69aeb27c33a",
+  "trialCommits": [
+    "145213bedf2866ec57c0914a6c7d571ad684a7fa",
+    "9b822a0a896cf5f3010c158db8c0c6443ee4c07c"
+  ],
+  "mergedTree": "c95df954c3e7336963e43688d600df1a5d8aea39",
+  "writeSets": [
+    [
+      "photocraft/packages/editor/src/features/selections/boundary-regression.test.ts",
+      "photocraft/packages/editor/src/features/selections/session-gate.ts",
+      "photocraft/packages/editor/src/features/selections/workspace.ts"
+    ],
+    [
+      "photocraft/packages/editor/src/features/painting/boundary-regression.test.ts",
+      "photocraft/packages/editor/src/features/painting/stroke-points.ts",
+      "photocraft/packages/editor/src/features/painting/tool-parameters.ts"
+    ]
+  ],
+  "intersection": [],
+  "sharedAssemblyChanged": false,
+  "standaloneChecks": [
+    "selections: typecheck + 23 regressions passed",
+    "painting: typecheck + 33 regressions passed"
+  ],
+  "mergedChecks": "PhotoCraft build/typecheck; protocol70/editor269/verifier40 passed; host adapter275 and host typechecks passed"
+}

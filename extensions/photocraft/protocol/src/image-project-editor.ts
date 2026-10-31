@@ -4,8 +4,8 @@ import { featureCapabilitiesForStage } from "./features/index.js";
  * （change: 2026-10-16-integrate-photocraft-image-editing，任务 3.1/3.7 / design D1/D3/D8；
  *  change: 2026-10-22-complete-photocraft-webui-editing，任务 1.3 / design D2/D10）。
  *
- * 编辑内核是同一个 wasm 模块（`photocraft/rust/crates/editor-core`），React 直接调用
- * 它的方法，不再有 iframe、origin、session/generation 消息或桥协议。因此本模块只定义：
+ * 编辑器是固定上游的 egui/WASM 运行时（`marketplace/extensions/photocraft/web`），宿主经直接
+ * 实例端口调用它，没有 iframe、origin、session/generation 消息或桥协议。因此本模块只定义：
  *
  * - **分阶段能力清单**：菜单、工具栏、快捷键、命令面板与命令分派共用同一份；
  * - **命令注册表解码**：`commandsJson()` 的结果必须有界、可核对，并带 `allowed` 门；

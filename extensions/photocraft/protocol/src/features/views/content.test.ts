@@ -9,7 +9,8 @@
  * - 注释：数量、文本/作者长度与位置；
  * - `viewDocumentDataProblem` 返回具体字段名而不是笼统失败。
  *
- * 上限与 Rust `photocraft-project-verify` 的 `features/views` 常量一致，两边必须同时改动。
+ * 上限与原 Rust `photocraft-project-verify` 的 `features/views` 常量一致（Rust 侧已随独立子项目
+ * 移除，这里保留为协议侧字面量）。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -130,7 +131,7 @@ describe("视图数据的有界契约", () => {
   });
 
   it("上限与 Rust 核验常量逐项一致（改一处必须同时改另一处）", () => {
-    // 对照 `rust/crates/project-verify/src/features/views/mod.rs` 的公开常量。
+    // 对照原 project-verify/src/features/views/mod.rs 的公开常量（Rust 侧已移除）。
     expect(VIEW_DATA_LIMITS).toEqual({
       maxGuidesPerAxis: 4096,
       maxCoordinate: 1.0e7,

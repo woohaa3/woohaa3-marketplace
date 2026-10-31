@@ -1,13 +1,12 @@
 /**
  * 通道内容身份（change: 2026-10-22-add-photocraft-channel-workflows，任务 3.2）。
  *
- * 与 `rust/crates/editor-core/src/features/channels/content.rs` 逐字符一致：
+ * 与原 `editor-core/src/features/channels/content.rs` 逐字符一致（该内核已随独立子项目移除）：
  * 命名、种类、叠层颜色/不透明度、专色密度与平面像素摘要进入身份；查看态（目标/显隐）
  * 不进身份。没有通道时不写字段，旧工程身份保持逐字节不变。
  *
- * 接线由共享 `packages/protocol/src/features/shared/content.ts` 与
- * `rust/crates/editor-core/src/document_content.rs` 各加一处调用完成；未接线时本模块只被
- * 域内测试消费。
+ * 接线原本由共享 `features/shared/content.ts` 与内核 `document_content.rs` 各加一处调用完成；
+ * 内核侧随独立子项目移除后，本模块由协议侧实现消费。
  */
 import { fnv1a64Hex } from "../../content-hash.js";
 

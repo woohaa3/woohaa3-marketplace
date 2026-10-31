@@ -31,7 +31,7 @@ WASM 预算由扩展构建检查（raw 30 MB / gzip 13 MB）。构建同时把�
 | 产物 | 用途 |
 | --- | --- |
 | `extension/browser-dist/` | 浏览器 artifact（宿主发布目录与开发者模式重登记） |
-| `extension/dist/backend.js` | 站点后端工厂（`createPhotocraftBackendDefinition`） |
+| `extension/dist/backend.js` | 宿主插件工厂 `createPhotocraftPlugin`（`hostPlugin`） |
 | `marketplace/.local/photocraft/` | 本地预构建安装单元（`build-extension.mjs`，不入库） |
 
 可用 `--outdir <目录>` 改变预构建输出位置。公开客户端不再内置本扩展；本地安装单元只用于
@@ -53,9 +53,7 @@ pnpm dev --dev-source marketplace/extensions/photocraft/extension
 `browser-dist/` 变化后，宿主重新登记 artifact 并**原地重装扩展实例**：不刷新页面、不重建画布
 scope、不重启宿主。开发者目录不签名、不写 `installations.json`、优先级高于受管版本。
 
-**后端当前仍需重启**：本扩展声明的是站点 `backend` 工厂，而开发者模式的后端热切换只覆盖
-`hostPlugin` 扩展、且监听的是 `backend-dist/`；`dist/backend.js` 变化不会换掉已激活的定义。
-改后端源码（`extension/src/backend.ts`、`project-verifier`、`protocol`）后重启宿主。
+**后端当前仍需重启**：本扩展声明的是 `hostPlugin`，扫描器把它记为 `hotSwappable`，但「热切换」只覆盖重新装配前端贡献；`dist/backend.js`（含 `project-verifier`、`protocol` 的内联代码）变化不会换掉已激活的宿主插件。改后端源码（`extension/src/backend.ts`、`project-verifier`、`protocol`）后重启宿主。
 
 ## 打包与发布
 

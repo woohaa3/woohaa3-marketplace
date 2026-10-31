@@ -30,8 +30,9 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 
 [extensions/photocraft](extensions/photocraft) 是**多包工作区**：`extension/` 是可加载扩展包
 （`extension.json` + `src/frontend/` + 后端工厂），`web/`、`protocol/`、`project-verifier/` 是它的
-编辑器与核验依赖。它演示另一条链路——宿主在**开发者模式**下直接指向源码目录，作者侧增量重建，
-产物变化即重载扩展实例，不经过 Release、签名与受管安装：
+编辑器与核验依赖；`notes/` 与 `openspec/` 是旧独立子项目迁来的历史笔记与归档规格（只作追溯，不是
+可运行代码，也没有 `openspec/config.yaml`）。它演示另一条链路——宿主在**开发者模式**下直接指向源码目录，
+作者侧增量重建，产物变化即重载扩展实例，不经过 Release、签名与受管安装：
 
 ```sh
 # 依赖与首次构建（client 与 marketplace 同级；父仓里它们是两个子模块）

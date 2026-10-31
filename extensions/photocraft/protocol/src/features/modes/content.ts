@@ -4,8 +4,8 @@ import { isFiniteNumberValue } from "../shared/content.js";
  * 图像模式与调色板的内容身份
  * （change: 2026-10-22-add-photocraft-image-mode-workflows，任务 3.2 / design D1b）。
  *
- * 与 Rust `rust/crates/editor-core/src/features/modes/content.rs::canonicalize_mode` 逐字节一致，
- * 两端共读同目录的 `content-fixtures.json`。文本用整数表示数值（8 位色 `0..=255`、油墨与曲线
+ * 与原 Rust `editor-core` 的 `canonicalize_mode` 逐字节一致（该内核已随独立子项目移除，此处保留
+ * 当时共读的 `content-fixtures.json` 作为回归基线）。文本用整数表示数值（8 位色 `0..=255`、油墨与曲线
  * `0..=10000`），因此不需要浮点格式化协商。
  *
  * **缺省不产生行**：RGB/8 位/无颜色表/无油墨返回 `""`，旧工程与本次未改模式的工程指纹不变。

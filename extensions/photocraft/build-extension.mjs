@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Author here; distribute only self-contained runtime artifacts to the public client.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +13,18 @@ const destination = path.resolve(outIndex === -1 ? path.join(root, '../../.local
 if (destination === root || root.startsWith(`${destination}${path.sep}`) || destination.startsWith(`${root}${path.sep}`)) {
   throw new Error('Output must be outside the authoring workspace');
 }
-execFileSync(process.execPath, [path.join(source, 'build.mjs')], { stdio: 'inherit' });
+// `--skip-build` 复用 extension/ 里已有的 runtime 产物，只重新组装并拷贝目标目录
+// （dev 迭代用；build-dev.mjs 默认走这条路径）。
+const skipBuild = process.argv.includes('--skip-build');
+if (skipBuild) {
+  for (const required of ['extension.json', 'dist/backend.js', 'browser-dist/artifact-manifest.json']) {
+    if (!existsSync(path.join(source, required))) {
+      throw new Error(`--skip-build 需要已有的 ${required}；先跑一次完整构建：pnpm build:extension`);
+    }
+  }
+} else {
+  execFileSync(process.execPath, [path.join(source, 'build.mjs')], { stdio: 'inherit' });
+}
 const staging = path.join(path.dirname(destination), `.${path.basename(destination)}.staging`);
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });

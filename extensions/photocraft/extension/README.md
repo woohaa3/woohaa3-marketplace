@@ -62,7 +62,7 @@ scope、不重启宿主。开发者目录不签名、不写 `installations.json`
 ```sh
 node client/scripts/pack-extension.mjs marketplace/extensions/photocraft/extension \
   --key <ed25519私钥.pem> \
-  --out photocraft-0.1.1.wxt
+  --out photocraft-0.1.2.wxt
 ```
 
 资产名必须是 `photocraft-<version>.wxt`，发布到本仓库的 GitHub Release；客户端

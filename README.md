@@ -72,11 +72,11 @@ extensions:
     github:
       enabled: true
       repos: woohaa3/woohaa3-marketplace
-    # <keyId>=<base64 公钥>，逗号分隔；示例插件用下面这把 key
-    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjXfDA++dqDXXRoTMnclB46Aw=
+    # <keyId>=<base64 公钥>，逗号分隔，只能追加
+    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjXfDA++dqDXXRoTMnclB46Aw=,1557d94930ad41fe=0tUK6/phv6wVLGOicax1gotkV6ITeVKwOdHpZC4Qdc4=
 ```
 
-- `enabled` 缺省为 `false`：没显式打开时客户端不会向 GitHub 发任何请求。
+- `enabled` 缺省为 `true`（官方市场仓库随客户端内置）；关掉后来源不可用且绝不发请求。
 - `trustedKeys` 是本机信任根，只能追加；示例插件的私钥不在此仓库里，**别人无法冒充发布**。
   换自备密钥重新发布时，把新的 keyId / 公钥追加进来即可。
 

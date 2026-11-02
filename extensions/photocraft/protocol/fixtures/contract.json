@@ -1,5 +1,5 @@
 {
-  "$comment": "PhotoCraft 跨语言语义 fixture 的**唯一权威来源**（change: 2026-10-21-extract-photocraft-subproject，任务 2.3 / design D2；change: 2026-10-22-complete-photocraft-webui-editing，任务 1.3 扩展阶段清单）。Rust 内核（rust/crates/editor-core/tests/contract_fixture.rs）与 TypeScript 协议包（packages/protocol/src/contract-fixture.test.ts）都读这一份文件，任何一边都不再读取另一端或宿主的源码。修改引擎版本、来源提交、格式版本、能力阶段或内容指纹基线时必须同时更新本文件并让两端测试重新通过。",
+  "$comment": "PhotoCraft 跨语言语义 fixture 的**唯一权威来源**（change: 2026-10-21-extract-photocraft-subproject，任务 2.3 / design D2；change: 2026-10-22-complete-photocraft-webui-editing，任务 1.3 扩展阶段清单）。原 Rust 内核（`editor-core/tests/contract_fixture.rs`）与 TypeScript 协议包（src/contract-fixture.test.ts）曾共读这一份文件；该 Rust 内核已随独立子项目移除，现在只有协议侧消费，任何一边都不读取另一端或宿主的源码。修改引擎版本、来源提交、格式版本、能力阶段或内容指纹基线时必须同时更新本文件并让两端测试重新通过。",
   "upstreamRepository": "storytold/photocraft",
   "upstreamCommit": "4e7a17cd5d5723313f459753663d0d155f047e19",
   "upstreamVersion": "0.9.0",

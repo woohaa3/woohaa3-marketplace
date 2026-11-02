@@ -4,8 +4,9 @@
  *  change: 2026-10-21-extract-photocraft-subproject，任务 3.1 —— 迁入 PhotoCraft 并实例化）。
  *
  * 默认用进程内的有界 TS 核验（`project-verification.ts`）。部署时可选接入**原生无 UI 核验
- * 工具**（`rust/crates/project-verify`）：它与编辑器共用同一固定文档解析实现，能力边界与
- * 格式解析不会与编辑器漂移。
+ * 工具**（`photocraft-project-verify` 二进制，路径由 `WOOHAA3_PROJECT_VERIFIER_PATH` 提供）：
+ * 它与编辑器共用同一固定文档解析实现，能力边界与格式解析不会与编辑器漂移。该工具源码不在本仓，
+ * 未配置时完全走进程内核验。
  *
  * 适配器本身承担设计要求的进程纪律：
  * - 只以**参数数组**启动（绝不经过 shell，绝不拼接用户输入到命令行）；

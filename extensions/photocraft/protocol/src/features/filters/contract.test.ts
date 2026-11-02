@@ -2,11 +2,11 @@
  * 滤镜域纯数据声明回归（U46–U49）。
  *
  * 守住三件事：
- * 1. 预算下限与内核 `catalog.rs` 的 `MAX_*`、`catalogue().limits` 逐项相同（两侧各钉一份字面量，
- *    任一侧放宽都会在这里或 Rust 单测里报错）；
+ * 1. 预算下限与原 `catalog.rs` 的 `MAX_*`、`catalogue().limits` 逐项相同（原 Rust 侧字面量与
+ *    单测已随独立子项目移除，这里只保留协议侧字面量）；
  * 2. 明确排除项不进入能力清单，也不能被误当成「已交付」；
  * 3. 本域仍只声明既有的两个能力 id——新增 id 必须由集成负责人同时更新
- *    `tests/fixtures/contract.json` 与 Rust 能力握手，本域不自作主张。
+ *    `fixtures/contract.json`，本域不自作主张。
  */
 import { expect, it } from "vitest";
 import {
@@ -18,8 +18,9 @@ import {
 } from "./index.js";
 
 it("预算下限与内核常量逐项一致", () => {
-  // 与 rust/crates/editor-core/src/features/filters/catalog.rs 的 MAX_EFFECTS/MAX_PINS/
-  // MAX_PLANES/MAX_PARAMS/MAX_RESOURCE_POINTS 以及 catalogue()["limits"]["seedMax"] 相同。
+  // 与原 editor-core/src/features/filters/catalog.rs 的 MAX_EFFECTS/MAX_PINS/MAX_PLANES/
+  // MAX_PARAMS/MAX_RESOURCE_POINTS 以及 catalogue()["limits"]["seedMax"] 相同（该 Rust 文件
+  // 已随独立子项目移除，这里保留为协议侧字面量）。
   expect(FILTER_WORKFLOW_LIMITS).toEqual({
     maxEffects: 32,
     maxPins: 16,

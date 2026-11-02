@@ -16,8 +16,8 @@ PhotoCraft 的纯协议包：编辑定义严格联合、引擎/能力/格式版�
 | `integrated-content.json` | 模式、通道、文字样式、路径、动画与变量同时存在时的身份对账 |
 | `project-limits.json` | 图片工程与交换资源的资源上限 |
 
-它们原本分别放在 `client/photocraft/tests/fixtures/` 与 `client/photocraft/rust/`。
-现在收在本目录下，测试用相对路径引用，不再跨目录读 Rust workspace。
+它们原本分别放在旧独立子项目的 `tests/fixtures/` 与 `rust/` 下。现在收在本目录下，测试用相对路径引用；
+对应的 Rust workspace 已随独立子项目移除，只剩这些数据文件作跨语言基线。
 
 ## 命令
 

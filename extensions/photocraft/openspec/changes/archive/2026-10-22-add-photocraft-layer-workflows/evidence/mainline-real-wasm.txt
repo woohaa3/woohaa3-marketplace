@@ -1,0 +1,148 @@
+前置	新建 1440×1000	通过	{"document":0}
+前置	画布尺寸	1440×1000	
+U57	新建渐变填充层	通过	[object Object]
+U57	读回规范参数	gradient	
+U57	参数预览返回像素	1024×711	
+U57	预览不改正式指纹	通过	
+U57	提交参数（一步历史）	通过	true
+U57	改参数改变内容身份	通过	
+U57	非法参数被拒	通过	
+U57	撤销	通过	true
+U57	撤销恢复原身份	通过	
+U57	重做	通过	true
+U58	建像素层 A	通过	4
+U58	建像素层 B	通过	5
+U58	选中 A	通过	{"selected":[4]}
+U58	加选 B	通过	{"selected":[4,5]}
+U58	多选成立	[4,5]	
+U58	linkLayers	通过	{"changed":true,"layers":4,"result":{"linked":true},"state":
+U58	链接两层	通过	[object Object]
+U58	两层链接组一致	group=1	
+U58	setLabelColor	通过	{"changed":true,"layers":4,"result":{"changed":true,"color":
+U58	颜色标签	通过	[object Object]
+U58	标签读回	blue	
+U58	selectLinkedLayers	通过	{"changed":false,"layers":4,"result":{"selected":2},"state":
+U58	选中所属链接层	通过	[object Object]
+U58	选择后含链接层	[4,5]	
+U58	stampDown	通过	{"changed":true,"layers":5,"result":{"layer":6},"state":{"ac
+U58	向下盖印	通过	[object Object]
+U58	盖印新增一层	4→5	
+U58	盖印层保留来源可见	通过	null
+U58	建位置锁定层	通过	7
+U58	位置锁定已生效	通过	
+U58	加选锁定层	通过	{"selected":[4,7]}
+U58	位置锁定层参与对齐被拒	通过	{"code":"command-failed","message":"命令 layer.align.leftEdges 被拒绝：所选或联动图层已锁定位置，请先解锁再对齐或分布"}
+U58	恢复只选链接两层	通过	{"selected":[4]}
+U58	加选 B	通过	{"selected":[4,5]}
+U58	链接保持	通过	{"changed":true,"layers":6,"result":{"linked":false},"state"
+U59	源层落笔	通过	{"selected":[5]}
+U59	选区	通过	null
+U59	填充选区	通过	{"contents":"color"}
+U59	全选	通过	null
+U59	复制	通过	{"bounds":[200,150,400,300]}
+U59	新选区	通过	null
+U59	粘贴入	通过	{"changed":true,"layers":7,"result":{"layer":8,"offset":[380
+U59	粘贴入新增一层	6→7	
+U59	原剪贴板不变	通过	
+U59	再选区	通过	null
+U59	pasteOutside	通过	{"changed":true,"layers":8,"result":{"layer":9,"offset":[450
+U59	粘贴外新增一层	7→8	
+U59	取消选区（无选区时为预期拒绝）	按预期拒绝	{"code":"command-failed","message":"命令 select.deselect 被拒绝：command `select.deselect` is not avai
+U59	无选区时拒绝	通过	{"code":"command-failed","message":"命令 edit.pasteSpecial.pasteInto 被拒绝：粘贴入/外需要先建立选区"}
+U60	分离端点预览	通过	{"preview":{"height":711,"pixels":[136,0,255,255,136,0,255,2
+U60	预览返回真实合成像素	1024×711	
+U60	预览不改指纹	通过	
+U60	apply	通过	{"changed":true,"layers":8,"state":{"activeLayer":5,"activeT
+U60	提交混合选项	通过	[object Object]
+U60	分离端点读回	[30,60,200,235]	
+U60	通道读回	[true,true,false,true]	
+U60	挖空读回	shallow	
+U60	交叉端点被拒	通过	
+U61	preset apply	通过	{"changed":true,"layers":8,"result":{"layers":[4],"style":"G
+U61	应用内置预设（取得效果）	通过	[object Object]
+U61	copyStyle	通过	{"changed":false,"hasStyleClipboard":true,"state":{"activeLa
+U61	复制样式	通过	[object Object]
+U61	建目标层	通过	10
+U61	pasteStyle	通过	{"changed":true,"layers":9,"state":{"activeLayer":10,"active
+U61	粘贴样式	通过	[object Object]
+U61	目标层获得效果	有	
+U61	scaleEffects	通过	{"changed":true,"layers":9,"state":{"activeLayer":10,"active
+U61	缩放效果	通过	[object Object]
+U61	transferEffects	通过	{"changed":true,"layers":9,"result":{"from":4,"to":10},"stat
+U61	转移效果	通过	[object Object]
+U61	createLayer	通过	{"changed":true,"layers":12,"result":{"layers":3},"state":{"
+U61	效果转层	通过	[object Object]
+U61	转层后层数	9→12	
+U61	rasterizeStyle	通过	{"changed":true,"layers":12,"result":{"layer":4,"layers":[4]
+U61	样式栅格化	通过	[object Object]
+U61	列出预设	通过	3
+U61	保存预设	通过	1
+U61	重命名预设	通过	2
+U61	删除预设	通过	3
+U61	恢复默认预设库	通过	4
+U61	defaultFor	通过	{"changed":false,"presets":{"params":{"angle":120,"antiAlias
+U61	读取效果默认值	通过	[object Object]
+U61	makeDefault	通过	{"changed":false,"presets":{"kind":"dropShadow"},"presetsRev
+U61	设为用户默认	通过	[object Object]
+U61	预设操作不推进文档修订	revision=36	
+U62	建羽化边缘层	通过	17
+U62	去边预览	通过	{"preview":{"height":711,"pixels":[136,0,255,255,136,0,255,2
+U62	去边预览像素	1024×711	
+U62	预览不改指纹	通过	
+U62	removeWhiteMatte	通过	{"changed":true,"layers":13,"state":{"activeLayer":17,"activ
+U62	移除白色杂边（真实改像素）	通过	[object Object]
+U62	改像素后内容身份变化	通过	
+U62	撤销	通过	true
+U62	撤销恢复原像素	通过	
+U62	removeBlackMatte	通过	{"changed":true,"layers":13,"state":{"activeLayer":17,"activ
+U62	移除黑色杂边	通过	[object Object]
+U62	decontaminate	通过	{"changed":true,"layers":13,"state":{"activeLayer":17,"activ
+U62	颜色净化（纯色无差为无变化）	通过	[object Object]
+U62	宽度越界被拒	通过	
+U62	建调整层	通过	18
+U62	非像素层被拒	通过	
+U62	建填充层	通过	19
+U62	填充层被拒	通过	
+U63	选中 A 作为过滤基准	通过	{"selected":[4]}
+U63	按混合模式过滤	visible=3/15	
+U63	组合条件（种类+名称+只选中）	visible=1	
+U63	多选种类	visible=12	
+U63	过滤不改内容/选择/修订	通过	
+U63	非法主条件被拒	通过	
+U64	comp new A	通过	{"changed":true,"layers":15,"result":{"comp":1},"state":{"ac
+U64	新建复合 A（三字段）	通过	[object Object]
+U64	隐藏一层	通过	null
+U64	comp new B	通过	{"changed":true,"layers":15,"result":{"comp":2},"state":{"ac
+U64	新建复合 B（仅可见性）	通过	[object Object]
+U64	复合列表	A,B	
+U64	B 快照只含可见性	[{"appearance":null,"layer":2,"position":null,"visible":true},{"appearance":null,"layer":3,"position":null,"visible":true}]	
+U64	A 快照含位置与外观	[{"appearance":{"blend":"normal","effects":{"enabled":true,"items":[]},"fillOpacity":1,"opacity":1},"layer":2,"position":[0,0],"visible":true}]	
+U64	apply A	通过	{"changed":true,"layers":15,"result":{"comp":1,"missingLayer
+U64	切换复合 A	通过	[object Object]
+U64	切 A 后该层恢复可见	通过	
+U64	apply B	通过	{"changed":true,"layers":15,"result":{"comp":2,"missingLayer
+U64	切换复合 B	通过	[object Object]
+U64	previous	通过	{"changed":true,"layers":15,"result":{"comp":1,"missingLayer
+U64	上一个复合	通过	[object Object]
+U64	next	通过	{"changed":true,"layers":15,"result":{"comp":2,"missingLayer
+U64	下一个复合	通过	[object Object]
+U64	update	通过	{"changed":true,"layers":15,"result":{"updated":[1]},"state"
+U64	更新复合	通过	[object Object]
+U64	duplicate	通过	{"changed":true,"layers":15,"result":{"comp":3},"state":{"ac
+U64	复制复合	通过	[object Object]
+U64	rename	通过	{"changed":true,"layers":15,"result":{"comp":3},"state":{"ac
+U64	重命名副本	通过	[object Object]
+U64	comment	通过	{"changed":true,"layers":15,"result":{"comp":3},"state":{"ac
+U64	写注释	通过	[object Object]
+U64	options	通过	{"changed":true,"layers":15,"result":{"comp":3},"state":{"ac
+U64	改选项	通过	[object Object]
+U64	delete	通过	{"changed":true,"layers":15,"result":{"deleted":3},"state":{
+U64	删除副本	通过	[object Object]
+U64	缺失复合被拒	通过	
+保存重开	打开导出的工程	通过	
+保存重开	内容身份一致	通过	1bce72db2591cf55
+保存重开	填充层参数可读回	gradient	
+保存重开	图层复合保留	A,B	
+范围	未改动 vendored 上游	只读引用	
+---
+total 146 通过(含读回证据) 138 拒绝/失败 0

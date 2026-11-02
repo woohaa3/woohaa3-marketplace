@@ -1,7 +1,7 @@
 /**
  * 跨语言语义 fixture 核对（change: 2026-10-21-extract-photocraft-subproject，任务 2.3 / design D2）。
  *
- * 迁移前 contracts 的交叉核对测试既读 Rust workspace 的 `project-limits.json`，又（Rust 侧）
+ * 迁移前 contracts 的交叉核对测试既读 Rust workspace 的 `project-limits.json`，又（当时的 Rust 侧）
  * `include_str!` 读宿主 TS 源码，两个方向都让测试穿透目录。现在唯一共享数据是子项目内的
  * `tests/fixtures/contract.json`：Rust 的 `tests/contract_fixture.rs` 与这里指向同一文件。
  *
@@ -219,7 +219,7 @@ describe("历史内容指纹逐字节兼容", () => {
    * 排版内容的跨语言基线（change: 2026-10-22-add-photocraft-typography-workflows，任务 3.2）。
    *
    * 这一条覆盖的正是本 change 新增的内容面：逐字符 run、段落选项、OpenType、Warp、抗锯齿、
-   * 样式表引用。Rust 侧同名断言在 `rust/crates/editor-core/tests/contract_fixture.rs`，
+   * 样式表引用。Rust 侧同名断言原在 editor-core/tests/contract_fixture.rs（已随独立子项目移除），
    * 两边读同一份 fixture，任何一侧少写一个字段都会立刻失败。
    */
   it("排版内容规范文本与指纹复现跨语言基线", () => {

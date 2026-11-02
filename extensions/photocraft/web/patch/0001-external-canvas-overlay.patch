@@ -354,10 +354,10 @@ index 87e6eaf..db322a9 100644
      /// Fetches the served families asked for (picked in a font menu, or needed by a layout) and
      /// installs the files that arrived.
      fn serve_fonts(&mut self, ctx: &egui::Context) {
-+        // A Chinese UI can show no document text at all, so `request_for_text` would never ask for
-+        // the script font: drive the request from the interface language instead. `request` and
-+        // `fetched` dedupe repeats, so calling this every frame downloads each file once.
-+        served_fonts::request_for_languages([i18n::current().code()]);
++        // The package ships its served fonts: load every family up front, whatever the interface
++        // language is (an English UI still edits Chinese documents). `request` dedupes per family,
++        // so calling this every frame fetches each file once.
++        served_fonts::request_all();
          let requested = served_fonts::take_requests();
          let (fetch, arrived) = {
              let mut s = self.served.lock().unwrap_or_else(|e| e.into_inner());
@@ -1487,7 +1487,7 @@ index b7ae085..37c7640 100644
  
  use photocraft_doc::{DocId, LayerContent, LayerId, TextLayer};
  pub use photocraft_text::served::{ServedFont, add_families, add_fonts, is_relative_path, parse_manifest, request_for_languages, take_requests};
-@@ -12,6 +12,58 @@ use crate::PhotocraftApp;
+@@ -12,6 +12,66 @@ use crate::PhotocraftApp;
  /// Layers whose document was busy with a background job when their font arrived.
  static PENDING: Mutex<Vec<(DocId, LayerId)>> = Mutex::new(Vec::new());
  
@@ -1519,6 +1519,14 @@ index b7ae085..37c7640 100644
 +        install_ui_fonts(ctx);
 +    }
 +    added
++}
++
++/// Asks for every served family up front: the package ships these files, so load them whatever
++/// the interface or document language is, instead of waiting for a language or a layout to ask.
++pub fn request_all() {
++    for family in photocraft_text::served::families() {
++        photocraft_text::served::request(&family);
++    }
 +}
 +
 +/// Registers every stored served script fallback at the lowest priority in every UI family.

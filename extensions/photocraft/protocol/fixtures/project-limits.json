@@ -1,5 +1,5 @@
 {
-  "$comment": "图片工程与交换资源的**唯一权威来源**（notes/scope.md「首期资源上限」+ change 2026-10-22-complete-photocraft-webui-editing 任务 1.4）。Rust 核验工具与 TypeScript 契约（IMAGE_PROJECT_LIMITS）都必须与本文件一致：Rust 侧 rust/crates/project-verify/tests/limits_agree.rs 与 protocol 侧 src/image-project.test.ts 各有一个交叉核对测试。原有工程上限保持不变；新增的 PSD／跨文档载荷／ABR 预算只约束导入导出与笔刷库，不抬高工程预算。",
+  "$comment": "图片工程与交换资源的**唯一权威来源**（notes/scope.md「首期资源上限」+ change 2026-10-22-complete-photocraft-webui-editing 任务 1.4）。TypeScript 契约（IMAGE_PROJECT_LIMITS）由 protocol 侧 src/image-project.test.ts 逐项核对；原 Rust 核验工具（`project-verify`）已随独立子项目移除，只剩可选的外部原生二进制（`WOOHAA3_PROJECT_VERIFIER_PATH`），不再有该侧的交叉核对测试。原有工程上限保持不变；新增的 PSD／跨文档载荷／ABR 预算只约束导入导出与笔刷库，不抬高工程预算。",
   "maxCanvasSide": 8192,
   "maxCanvasPixels": 67108864,
   "maxLayers": 64,

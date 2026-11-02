@@ -90,7 +90,7 @@ const ALLOWED_OBJECT_KINDS = new Set(["raster", "adjustment", "text", "group", "
  *
  * 上游 `Adjustment` 是**外部标记**的枚举（`{"Exposure": {…}}`，无参数类型直接序列化成
  * `"Invert"`），不是内部标记的 `{"kind": "exposure", …}`。接受集合必须与唯一命令门
- * （`rust/crates/editor-core` 的 `features/adjustments` 命令表）一致：门禁放开的类型必须接受，
+ * （固定上游内核的 `features/adjustments` 命令表）一致：门禁放开的类型必须接受，
  * 没放开的必须拒绝，否则会出现「核验通过、运行时拒绝」。范围外的 LUT（`ColorLookup`）与
  * 无法求值的 PSD 块（`Unsupported`）因此继续拒绝。
  */
@@ -115,7 +115,7 @@ const ALLOWED_ADJUSTMENT_VARIANTS = new Set([
 const REJECTED_OBJECT_KINDS = new Set(["smart", "shape"]);
 
 /**
- * 视频图层的本域预算（与 `rust/crates/editor-core/src/features/animation/limits.rs` 和原生
+ * 视频图层的本域预算（与固定上游内核的 `features/animation/limits` 和原生
  * 核验器的 `features/animation/mod.rs` 同值）。共享上限的唯一权威仍是 `project-limits.json`；
  * 这里镜像同一收紧边界，因为原生与进程内核验必须对同一份工程给出相同的接收结论。
  */

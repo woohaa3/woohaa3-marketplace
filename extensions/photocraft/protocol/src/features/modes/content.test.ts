@@ -2,7 +2,7 @@
  * 图像模式与调色板的内容身份：跨语言 fixture 核对
  * （change: 2026-10-22-add-photocraft-image-mode-workflows，任务 3.2）。
  *
- * 与 Rust `rust/crates/editor-core/src/features/modes/tests_content.rs` 共读
+ * 与原 Rust `editor-core/src/features/modes/tests_content.rs` 共读（Rust 侧已随独立子项目移除）
  * `content-fixtures.json`：任一侧的规范文本漂移都会失败。
  */
 import { readFileSync } from "node:fs";

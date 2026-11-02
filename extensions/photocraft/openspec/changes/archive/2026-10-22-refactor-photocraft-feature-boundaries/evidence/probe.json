@@ -1,0 +1,38 @@
+{
+  "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 770 (0x0000A780) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "errors": [],
+  "navigations": 1,
+  "selectionPersists": true,
+  "dragCancelPreservesSelection": true,
+  "brushSwitchWithoutReload": true,
+  "painted": "有未保存修改 · 256×256 · 1 层 · rev 3 · 基线 56910280",
+  "undo": "已同步 · 256×256 · 1 层 · rev 4 · 基线 56910280",
+  "redo": "有未保存修改 · 256×256 · 1 层 · rev 5 · 基线 56910280",
+  "bytes": [
+    {
+      "name": "photocraft-A.pcraft",
+      "length": 190909,
+      "header": "504b030414000008"
+    },
+    {
+      "name": "photocraft-A.png",
+      "length": 62218,
+      "header": "89504e470d0a1a0a"
+    }
+  ],
+  "layout": {
+    "width": 1024,
+    "scroll": 1024,
+    "canvas": 692,
+    "sidebar": {
+      "x": 744,
+      "y": 181,
+      "width": 280,
+      "height": 552,
+      "top": 181,
+      "right": 1024,
+      "bottom": 733,
+      "left": 744
+    }
+  }
+}

@@ -5,8 +5,8 @@
  * 共同钉住，新增 id 需要集成负责人同步两端。本文件只为滤镜工作流提供可比较的纯数据，
  * 供界面解码内核清单时做下界校验（内核可以更严，不能比这里宽），以及发布说明逐项列明暂缓范围。
  *
- * 数值与 `rust/crates/editor-core/src/features/filters/catalog.rs` 的 `MAX_*` 常量一致；
- * 运行时权威是内核 `catalogue().limits`，本文件是协议声明的**下界**。
+ * 数值与原 `editor-core/src/features/filters/catalog.rs` 的 `MAX_*` 常量一致（该文件随独立子项目
+ * 移除，这里保留为协议侧字面量）；运行时权威是内核 `catalogue().limits`，本文件是**下界**。
  */
 
 /** 滤镜交互形态（与 Rust `catalog::Kind` 一一对应）。 */

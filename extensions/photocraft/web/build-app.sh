@@ -24,7 +24,7 @@ require_font_assets() {
     echo "       设置 PHOTOCRAFT_FONT_DIR 指向包含 NotoSansSC-Regular.otf 与 OFL-NotoSansSC.txt 的目录（默认 $(pwd)/../../../../client/web/frontend/public/assets/fonts）" >&2
     exit 1
   }
-  [ -f "$FONT_LICENSE" ] || { echo "error: 缺少字体许可证 $FONT_LICENSE（与 $FONT_FILE 同目录）" >&2; exit 1; }
+  [ -f "$FONT_LICENSE" ] || { echo "error: 缺少字体许可证 ${FONT_LICENSE}（与 $FONT_FILE 同目录）" >&2; exit 1; }
   [ -f "$FONT_MANIFEST" ] || { echo "error: 缺少字体清单 $FONT_MANIFEST" >&2; exit 1; }
 }
 
@@ -102,4 +102,4 @@ cp "$PHOTOCRAFT_SRC/LICENSE-APACHE" "$OUT/LICENSE-APACHE"
 copy_font_assets
 printf '%s\n' "$PATCH_HASH" > "$OUT/source.sha256"
 
-echo "==> 完成：$OUT（$(du -h "$OUT/photocraft-web_bg.wasm" | cut -f1)）"
+echo "==> 完成：${OUT}（$(du -h "$OUT/photocraft-web_bg.wasm" | cut -f1)）"

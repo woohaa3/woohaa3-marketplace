@@ -30,8 +30,9 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 
 [extensions/photocraft](extensions/photocraft) 是**多包工作区**：`extension/` 是可加载扩展包
 （`extension.json` + `src/frontend/` + 后端工厂），`web/`、`protocol/`、`project-verifier/` 是它的
-编辑器与核验依赖。它演示另一条链路——宿主在**开发者模式**下直接指向源码目录，作者侧增量重建，
-产物变化即重载扩展实例，不经过 Release、签名与受管安装：
+编辑器与核验依赖；`notes/` 与 `openspec/` 是旧独立子项目迁来的历史笔记与归档规格（只作追溯，不是
+可运行代码，也没有 `openspec/config.yaml`）。它演示另一条链路——宿主在**开发者模式**下直接指向源码目录，
+作者侧增量重建，产物变化即重载扩展实例，不经过 Release、签名与受管安装：
 
 ```sh
 # 依赖与首次构建（client 与 marketplace 同级；父仓里它们是两个子模块）
@@ -71,11 +72,11 @@ extensions:
     github:
       enabled: true
       repos: woohaa3/woohaa3-marketplace
-    # <keyId>=<base64 公钥>，逗号分隔；示例插件用下面这把 key
-    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjXfDA++dqDXXRoTMnclB46Aw=
+    # <keyId>=<base64 公钥>，逗号分隔，只能追加
+    trustedKeys: afd67694dd46ddcd=BeYbxnmO12EpA/qCrYZjXfDA++dqDXXRoTMnclB46Aw=,1557d94930ad41fe=0tUK6/phv6wVLGOicax1gotkV6ITeVKwOdHpZC4Qdc4=
 ```
 
-- `enabled` 缺省为 `false`：没显式打开时客户端不会向 GitHub 发任何请求。
+- `enabled` 缺省为 `true`（官方市场仓库随客户端内置）；关掉后来源不可用且绝不发请求。
 - `trustedKeys` 是本机信任根，只能追加；示例插件的私钥不在此仓库里，**别人无法冒充发布**。
   换自备密钥重新发布时，把新的 keyId / 公钥追加进来即可。
 

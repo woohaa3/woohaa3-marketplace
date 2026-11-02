@@ -199,7 +199,7 @@ describe("新区内容身份（P5/P7）", () => {
   });
 
   it("U43/U44 规范串与 Rust 逐字节一致", () => {
-    // 与 `rust/crates/editor-core/src/identity/tests.rs` 的
+    // 与原 editor-core/src/identity/tests.rs 的
     // `published_adjustment_canonical_strings_are_byte_identical_to_typescript` 同表：
     // 改一边必须同时改另一边，否则跨语言内容身份就会漂移。
     const channel = () => ({ inBlack: 0, gamma: 1, inWhite: 255 });
@@ -445,7 +445,7 @@ describe("图片工程严格联合（任务 2.1）", () => {
 
 describe("跨语言与单源一致性（任务 1.1/2.2）", () => {
   /**
-   * 与 Rust `rust/crates/editor-core/src/identity.rs` 的同一 fixture 一致：
+   * 与原 Rust `editor-core/src/identity.rs` 的同一 fixture 一致（Rust 侧已随独立子项目移除）：
    * 编辑器的内容指纹必须与协议包逐字节相同，否则「是否净变化」两端会给出不同答案。
    */
   it("跨语言指纹 fixture 与 Rust 实现一致", () => {

@@ -3,7 +3,7 @@
  * （change: 2026-10-22-add-photocraft-file-workflows，U04 / design D3）。
  *
  * 字段集合与上限与内核 `file.fileInfo` 一致：超出即拒绝，不静默截断。矩阵只声明**上游真实**
- * 行为（`photocraft/rust` 固定提交的编码器实现），供界面在保存/导出前如实提示损失，
+ * 行为（固定上游快照的编码器实现，见 `web/patch/SOURCE.md`），供界面在保存/导出前如实提示损失，
  * 不声称所有格式都保留元数据。
  */
 

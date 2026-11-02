@@ -6,6 +6,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "build:app": "pnpm -C web build:app",
-    "build:extension": "node build-extension.mjs"
+    "build:extension": "node build-extension.mjs",
+    "build:dev": "node build-dev.mjs",
+    "build:dev:full": "node build-dev.mjs --full"
   }
 }

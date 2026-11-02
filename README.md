@@ -143,3 +143,25 @@ gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hel
 | `extensions/<id>/` | 扩展源码；`extension.json` 声明、`src/frontend/` 浏览器入口 |
 | `extensions/<id>/`（多包） | 复杂扩展可自带 `pnpm-workspace.yaml`；此时可加载包放在 `extension/`，其余包是它的构建依赖（见 `photocraft`） |
 | `.gitignore` | 构建产物（`browser-dist/`、`backend-dist/`）不入库，发布只走 Release 资产 |
+
+## 证书链签名（v2）
+
+新版客户端和服务端可以启用独立于市场来源的固定信任域。发布者从管理端申请限定到
+单个 extensionId 的发布证书，完成本地持钥证明与独立审批，下载公开
+`CERTIFICATES.json`。发布私钥始终留在发布者本机或受保护的 CI secret 中，
+不放进此仓库、扩展包或管理端表单。
+
+```sh
+node client/scripts/pack-extension.mjs marketplace/extensions/photocraft/extension \
+  --key /secure/publisher.pem \
+  --certificate-chain /public/CERTIFICATES.json \
+  --out photocraft.wxt
+```
+
+`.wxt` 仍是归档，不是把整个 PhotoCraft 编译为一个 WASM：其 JS 入口、WASM、字体和
+其他资源以及证书链都受 `FILES.json` 和包签名覆盖。签名证明来源与完整性，不提供代码沙箱。
+
+启用 v2 域后，市场源提供的公钥不会成为根；用户也不能用“信任裸公钥”绕过证书、
+吊销或过期错误。旧版客户端会拒绝 v2 包，必须先部署客户端信任根与验证能力，再发布 v2。
+旧 v1 发行包只能按精确版本、归档摘要、文件摘要、公钥、归属与截止期申请迁移；
+不能把旧裸公钥批量升级为签发机构。未配置 v2 域的部署仍按上文 v1 流程运行。

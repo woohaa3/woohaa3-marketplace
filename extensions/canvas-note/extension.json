@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "extensionId": "canvas-note",
+  "version": "0.1.0",
+  "engines": {
+    "hostAbi": "^1.0.0",
+    "sdkAbi": "^1.0.0",
+    "protocolVersion": 1
+  },
+  "icon": { "glyph": "plugin" },
+  "site": {
+    "name": "画布备注",
+    "description": "工具栏备注，文案在宿主配置里。",
+    "version": "0.1.0",
+    "defaultEnabled": true,
+    "order": 90
+  },
+  "hostPlugin": {
+    "module": "./backend",
+    "factory": "createCanvasNotePlugin",
+    "order": 90
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@woohaa3/extension-canvas-note",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "教程示例：画布工具栏向宿主要一条备注。client 负责按钮，host 负责配置和路由。",
+  "exports": {
+    "./frontend": {
+      "types": "./src/frontend/index.ts",
+      "import": "./src/frontend/index.ts"
+    },
+    "./backend": {
+      "types": "./src/backend/index.ts",
+      "import": "./src/backend/index.ts"
+    }
+  },
+  "files": ["src", "browser-dist", "extension.json"],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.12",
+    "@woohaa3/contracts": "link:../../../client/web/contracts",
+    "@woohaa3/frontend": "link:../../../client/web/frontend",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3"
+  }
+}

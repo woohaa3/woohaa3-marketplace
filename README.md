@@ -26,6 +26,21 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 `site` 会进站点控制面 catalog，却没有可激活的东西，面板会一直显示「正在应用…」。
 浏览器本地扩展靠用户自己的插件开关启停。
 
+## 教程示例：`canvas-note`
+
+[extensions/canvas-note](extensions/canvas-note) 是开发教程用的例子：同一个插件里同时有 client 和 host。
+画布工具栏放一枚按钮，备注文案在宿主配置里，点一下向 host 要当前备注。
+
+开发用 dev 模式：在客户端仓库根目录构建两份产物，再用 `--dev-source` 登记这个目录。宿主加载的是产物。
+
+```sh
+node web/scripts/build-extension-browser.mjs --cwd ../marketplace/extensions/canvas-note --watch
+node web/scripts/build-extension-backend.mjs --cwd ../marketplace/extensions/canvas-note --watch
+pnpm dev --dev-source ../marketplace/extensions/canvas-note
+```
+
+结构和各文件的职责见该目录的 README。教程正文讲思路，实现以这里的源码为准。
+
 ## 完整工作区示例：`photocraft`
 
 [extensions/photocraft](extensions/photocraft) 是**多包工作区**：`extension/` 是可加载扩展包
@@ -141,6 +156,8 @@ gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hel
 | 路径 | 内容 |
 | --- | --- |
 | `catalog.json` | 市场目录：名称、描述、图标、`hotReload`（只影响展示） |
+| `extensions/hello-marketplace/` | 纯浏览器示例，用来走通 Release 安装 |
+| `extensions/canvas-note/` | 教程示例：client 按钮 + host 配置与路由 |
 | `extensions/<id>/` | 扩展源码；`extension.json` 声明、`src/frontend/` 浏览器入口 |
 | `extensions/<id>/`（多包） | 复杂扩展可自带 `pnpm-workspace.yaml`；此时可加载包放在 `extension/`，其余包是它的构建依赖（见 `photocraft`） |
 | `.gitignore` | 构建产物（`browser-dist/`、`backend-dist/`）不入库，发布只走 Release 资产 |

@@ -12,6 +12,12 @@
       "description": "最小市场示例扩展：只有一个前端面板，用来验证安装、启停与发布目录。",
       "icon": "generation",
       "hotReload": true
+    },
+    "canvas-note": {
+      "name": "画布备注",
+      "description": "教程示例：工具栏按钮向宿主要一条备注。client 负责显示，host 负责配置和路由。",
+      "icon": "plugin",
+      "hotReload": true
     }
   }
 }

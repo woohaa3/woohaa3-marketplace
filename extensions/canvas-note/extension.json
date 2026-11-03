@@ -12,6 +12,15 @@
     "name": "画布备注",
     "description": "工具栏备注，文案在宿主配置里。",
     "version": "0.1.0",
+    "configSchema": { "schemaId": "canvas-note-config", "schemaVersion": 1 },
+    "capabilities": [
+      {
+        "id": "canvas-note.note",
+        "kind": "handler",
+        "description": "读取宿主保存的画布备注文案",
+        "auth": "public"
+      }
+    ],
     "defaultEnabled": true,
     "order": 90
   },

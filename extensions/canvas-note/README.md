@@ -25,13 +25,14 @@ src/backend/index.ts    createCanvasNotePlugin，apply 里读配置并注册路�
 
 ## 本地跑
 
-工具链在 client 仓，不在这里复制。父仓里 `client` 与 `marketplace` 是同级子模块。在**客户端仓库根目录**：
+开发用 dev 模式。宿主登记这个目录，加载的是旁边构建出来的 `browser-dist/` 和 `backend-dist/`，不直接跑 `src/`。装到别人机器上时，装的也是这两份产物。
+
+工具链在 client 仓。父仓里 `client` 与 `marketplace` 是同级子模块。在**客户端仓库根目录**：
 
 ```sh
-pnpm -C ../marketplace/extensions/canvas-note install
 node web/scripts/build-extension-browser.mjs --cwd ../marketplace/extensions/canvas-note --watch
 node web/scripts/build-extension-backend.mjs --cwd ../marketplace/extensions/canvas-note --watch
 pnpm dev --dev-source ../marketplace/extensions/canvas-note
 ```
 
-打开画布，工具栏上出现「备注」。点一下，文案换成宿主返回的那句。
+打开画布，工具栏上出现「备注」。点一下，文案换成宿主返回的那句。只做类型检查时，先在本目录执行一次 `pnpm install`。

@@ -31,10 +31,9 @@ extensions/<extensionId>/          源码（extension.json + src/frontend/…）
 [extensions/canvas-note](extensions/canvas-note) 是开发教程用的例子：同一个插件里同时有 client 和 host。
 画布工具栏放一枚按钮，备注文案在宿主配置里，点一下向 host 要当前备注。
 
-它不在客户端 workspace 里。在客户端仓库根目录用 `--cwd` 指过来构建，再用 `--dev-source` 登记：
+开发用 dev 模式：在客户端仓库根目录构建两份产物，再用 `--dev-source` 登记这个目录。宿主加载的是产物。
 
 ```sh
-pnpm -C ../marketplace/extensions/canvas-note install
 node web/scripts/build-extension-browser.mjs --cwd ../marketplace/extensions/canvas-note --watch
 node web/scripts/build-extension-backend.mjs --cwd ../marketplace/extensions/canvas-note --watch
 pnpm dev --dev-source ../marketplace/extensions/canvas-note

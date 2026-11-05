@@ -43,11 +43,18 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     try { session.settle(); ++session.activation; if (session.page) await session.page.ctx.canvasNavigation.requestExitNodeFocus(); else session.hide(); }
     catch (error) { report(error); }
   };
+  const requestClose = (id: string) => {
+    try {
+      session.settle();
+      if (session.canCloseSaved(id)) { void session.close(id).catch(report); return; }
+      setReload(false); setDownloaded(false); setCloseId(id);
+    } catch (error) { report(error); }
+  };
   useEffect(() => session.subscribe(() => update(value => value + 1)), [session]);
   useEffect(() => { if (canvas.current) void session.initialize(canvas.current).then(() => { if (boot > 0) return session.retry(); }).catch(report); }, [session, boot]);
   useEffect(() => {
     session.onEscape = () => void exit();
-    session.onClose = id => { setReload(false); setDownloaded(false); setCloseId(id); };
+    session.onClose = requestClose;
     session.onEmpty = () => {
       if (session.recovery) onRelease();
       else void exit();
@@ -129,7 +136,7 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
   const finishClose = async (apply = false) => {
     if (!closeId) return; setBusy(true);
     try {
-      if (apply) { await session.apply(closeId); return; }
+      if (apply) { await session.apply(closeId); if (!session.canCloseSaved(closeId)) return; }
       if (reload) await session.reload(closeId); else await session.close(closeId); setCloseId(null); setDownloaded(false);
     } catch (error) { report(error); }
     finally { setBusy(false); }
@@ -167,23 +174,23 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
       <span className="photocraft-overlay__name">{state?.documentName ?? "PhotoCraft"}</span>
       <span className="photocraft-overlay__status">{session.recovery ? "本地恢复：仅可保存或关闭已有文档"
         : historyPreview ? "历史预览 · 只读"
-        : active?.conflict ?? (session.opening ? "正在打开…" : "返回后保留文档 · 刷新前请保存工程")}</span>
+        : active?.conflict ?? (session.opening ? "正在打开…" : node ? (session.canCloseSaved(active!.id) ? "已保存到节点" : "尚未保存工程") : "返回后保留文档 · 刷新前请保存工程")}</span>
       {node && !session.recovery ? <button className="photocraft-overlay__history" aria-pressed={historyOpen} data-photocraft-history="true"
         onClick={() => {
           if (!navigation) return;
           if (historyOpen) void navigation.requestCloseNodeHistory();
           else navigation.openNodeHistory({ nodeId: node.nodeId, kind: "image" });
         }}>历史</button> : null}
-      {node && !session.recovery ? <button disabled={session.applying.has(active!.id) || Boolean(preview) || !page?.ctx.canvasSession.isWritable() || Boolean(active?.conflict)} onClick={() => void session.apply(active!.id).catch(report)}>{session.applying.has(active!.id) ? "正在应用…" : "应用到节点"}</button> : null}
+      {node && !session.recovery ? <button disabled={session.canCloseSaved(active!.id) || session.applying.has(active!.id) || Boolean(preview) || !page?.ctx.canvasSession.isWritable() || Boolean(active?.conflict)} onClick={() => void session.apply(active!.id).catch(report)}>{session.applying.has(active!.id) ? "正在应用…" : "应用到节点"}</button> : null}
       {active?.conflict && node && !session.recovery ? <button onClick={() => { setReload(true); setDownloaded(false); setCloseId(active.id); }}>重载来源</button> : null}
-      {active ? <><button onClick={() => download(active.id)}>下载工程</button><button onClick={() => { setReload(false); setDownloaded(false); setCloseId(active.id); }}>关闭文档</button></> : null}
+      {active ? <><button onClick={() => download(active.id)}>下载工程</button><button onClick={() => requestClose(active.id)}>关闭文档</button></> : null}
     </header>
     {session.recovery ? <div className="photocraft-overlay__recovery">
       <h2>{session.recovery === "identity" ? "身份已更换，请结算之前的本地文档" : "PhotoCraft 已停用，本地文档仍保留"}</h2>
       <p>下载完成后请确认文件已保存。关闭后会释放本地文档；刷新或关窗会丢失未保存内容。</p>
       {[...session.documents.values()].map(doc => <div key={doc.id}>
         <span>{state?.documents?.find(d => d.id === doc.id)?.name ?? doc.id}</span>
-        <button onClick={() => download(doc.id)}>下载工程</button><button onClick={() => { setDownloaded(false); setCloseId(doc.id); }}>关闭文档</button>
+        <button onClick={() => download(doc.id)}>下载工程</button><button onClick={() => requestClose(doc.id)}>关闭文档</button>
       </div>)}
     </div> : null}
     <div ref={stage} className={`photocraft-overlay__stage${pending ? " photocraft-overlay__stage--pending" : ""}`} style={passthrough}>
@@ -208,7 +215,7 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     </div> : null}
     {closeId ? <div className="photocraft-overlay__scrim"><div className="photocraft-overlay__confirm">
       <h2>{reload ? "重载" : "关闭"}“{engineDoc?.name ?? "文档"}”？</h2>
-      <p>{downloaded ? "浏览器已启动下载。确认文件已实际保存后，再关闭文档。" : "关闭会丢弃此文档的图层和撤销记录。应用到节点只保存合成图片；保留图层请下载工程。"}</p>
+      <p>{downloaded ? "浏览器已启动下载。确认文件已实际保存后，再关闭文档。" : "当前修改尚未保存。关闭将丢弃这些修改；可应用到节点或下载工程。"}</p>
       {closeDoc?.attempt ? <p>已发出的应用可能继续完成，关闭文档不会撤回已提交的修改。</p> : null}
       <div className="photocraft-overlay__actions">
         <button disabled={busy} onClick={() => setCloseId(null)}>取消</button>

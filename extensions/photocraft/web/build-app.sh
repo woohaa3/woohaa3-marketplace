@@ -37,9 +37,9 @@ copy_font_assets() {
   cp "$FONT_MANIFEST" "$OUT/fonts/manifest.txt"
 }
 
-require_font_assets
+if [ "${1:-}" != "--source-only" ]; then require_font_assets; fi
 
-if [ "${1:-}" != "--rebuild" ]; then
+if [ "${1:-}" != "--rebuild" ] && [ "${1:-}" != "--source-only" ]; then
   if [ -f "$OUT/photocraft-web_bg.wasm" ] && [ -f "$OUT/photocraft-web.js" ] && [ -f "$OUT/source.sha256" ] && [ "$(cat "$OUT/source.sha256")" = "$PATCH_HASH" ]; then
     cp src/app-assets/*.js src/app-assets/*.html "$OUT/"
     copy_font_assets
@@ -66,6 +66,11 @@ git -C "$PHOTOCRAFT_SRC" apply --reverse --check "$(pwd)/patch/0001-external-can
 }
 if [ "$(git -C "$PHOTOCRAFT_SRC" rev-parse HEAD)" != "$PINNED_REV" ]; then
   echo "error: PhotoCraft 源码必须固定在 $PINNED_REV" >&2; exit 1
+fi
+
+if [ "${1:-}" = "--source-only" ]; then
+  printf '%s\n' "$PHOTOCRAFT_SRC"
+  exit 0
 fi
 
 command -v cargo >/dev/null || { echo "error: 需要 cargo（rustup）" >&2; exit 1; }

@@ -216,6 +216,25 @@ mod tests {
         }
     }
     #[test]
+    fn saved_project_round_trips_multiple_layers() {
+        let mut snapshot = document(16, 16);
+        let mut layer = snapshot.layers[0].clone();
+        layer.id.0 += 1;
+        layer.name = "Saved second layer".into();
+        Arc::make_mut(&mut snapshot).layers.push(layer);
+        let mut worker = ExportWorker::default();
+        worker.start(snapshot.clone(), 1, 0, ExportFormat::Project, 64 * 1024 * 1024).unwrap();
+        let bytes = wait(&mut worker).result.unwrap();
+        let restored = photocraft_io::import("saved.pcraft", &bytes).unwrap().document;
+        assert_eq!(restored.layers.len(), 2);
+        assert_eq!(restored.layers[1].name, "Saved second layer");
+        if let Some(path) = std::env::var_os("WOOHAA_TEST_PROJECT_FIXTURE") {
+            std::fs::write(&path, &bytes).unwrap();
+            worker.start(snapshot, 1, 0, ExportFormat::Png, 256 * 1024 * 1024).unwrap();
+            std::fs::write(format!("{}.png", std::path::Path::new(&path).display()), wait(&mut worker).result.unwrap()).unwrap();
+        }
+    }
+    #[test]
     fn source_size_exports_4k_and_8k_without_viewport_or_document_mutation() {
         for (w, h) in [(3840, 2100), (7680, 4200)] {
             let mut snapshot = document(w, h);

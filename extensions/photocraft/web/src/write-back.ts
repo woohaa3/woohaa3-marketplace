@@ -1,3 +1,5 @@
+import { PHOTOCRAFT_OFFICIAL_ENGINE_VERSION, IMAGE_PROJECT_CONTENT_TYPE, imageEditDocumentContentIdentity, type ImageProjectDocument } from "../../protocol/src/index.js";
+import { projectSnapshot } from "./project-snapshot.js";
 import type { Context } from "@woohaa3/frontend/extension-api";
 import type {} from "@woohaa3/frontend/extension-api";
 import type { ImageFocusImage } from "./focus-targets.js";
@@ -24,6 +26,9 @@ export function createWriteBack(dependencies: Dependencies | (() => Dependencies
   let baselineError: Error | null = null;
   let frozen: Uint8Array | null = null;
   let uploaded: { storageKey: string; checksum: string; contentType: string; size: number } | null = null;
+  let frozenProject: Uint8Array | null = null;
+  let project: ImageProjectDocument | null = null;
+  let snapshot: ReturnType<typeof projectSnapshot> | null = null;
   let flight: Promise<void> | null = null;
   const baselineContentIdentity = image.baselineContentIdentity ?? `media:${image.asset?.storageKey ?? ""}`;
   const ids = { canvasId, nodeId, requestId };
@@ -39,7 +44,7 @@ export function createWriteBack(dependencies: Dependencies | (() => Dependencies
     return false;
   };
   return {
-    apply(exportPng: () => Promise<Uint8Array>) {
+    apply(exportPng: () => Promise<Uint8Array>, exportProject?: () => Promise<Uint8Array>) {
       if (flight) return flight;
       flight = (async () => {
         if (finished) return;
@@ -47,7 +52,14 @@ export function createWriteBack(dependencies: Dependencies | (() => Dependencies
         if (!deps().canvasSession.isWritable()) throw new Error("当前画布只读，无法应用修改");
         if (!image.asset) throw new Error("原图缺少稳定媒体身份，无法写回；可用 PhotoCraft 文件菜单另存");
         if (attemptedComplete && await settle()) return;
-        frozen ??= await exportPng();
+        if (!frozen) {
+          const png = await exportPng();
+          const dimensions = pngSize(png);
+          const projectBytes = exportProject ? await exportProject() : null;
+          const candidate = projectBytes ? projectSnapshot(projectBytes) : null;
+          if (candidate && (candidate.width !== dimensions.width || candidate.height !== dimensions.height)) throw new Error("工程与合成图片尺寸不一致，请重试");
+          frozen = png; frozenProject = projectBytes; snapshot = candidate;
+        }
         const size = pngSize(frozen);
         if (!begun) {
           const begin = await deps().canvasRemote.editBegin({ ...ids, sessionId, kind: "image", baselineContentIdentity });
@@ -63,12 +75,23 @@ export function createWriteBack(dependencies: Dependencies | (() => Dependencies
           if (!upload.ok) throw new Error(upload.error);
           uploaded = upload.media;
         }
+        if (snapshot && !project) {
+          const upload = await deps().mediaRemote.upload({ file: new File([new Uint8Array(frozenProject!)], "document.pcraft", { type: IMAGE_PROJECT_CONTENT_TYPE }), canvasId });
+          if (!upload.ok) throw new Error(upload.error);
+          project = { version: "woohaa-image-project-v1", engine: "photocraft",
+            engineVersion: PHOTOCRAFT_OFFICIAL_ENGINE_VERSION, formatVersion: snapshot.formatVersion,
+            baseAssetId: image.asset.id, sourceWidth: image.project?.sourceWidth ?? image.sourceWidth ?? size.width,
+            sourceHeight: image.project?.sourceHeight ?? image.sourceHeight ?? size.height,
+            canvasWidth: size.width, canvasHeight: size.height, documentContentHash: snapshot.documentContentHash,
+            project: upload.media, sourceAssetIds: [image.asset.id] };
+        }
         if (!deps().canvasSession.isWritable()) throw new Error("画布已变为只读，请恢复连接后重试");
         attemptedComplete = true;
         const result = await deps().canvasRemote.editComplete({ ...ids, sessionId, kind: "image", baselineContentIdentity,
           media: {
+            ...(project ? { imageEdit: project, project: project.project, canvasWidth: project.canvasWidth, canvasHeight: project.canvasHeight } : {}),
             baseAssetId: image.asset.id, baseStorageKey: image.asset.storageKey,
-            sourceWidth: size.width, sourceHeight: size.height,
+            sourceWidth: project?.sourceWidth ?? size.width, sourceHeight: project?.sourceHeight ?? size.height,
             outputAssetId, outputStorageKey: uploaded.storageKey,
             checksum: uploaded.checksum, contentType: uploaded.contentType, size: uploaded.size,
             ...(image.asset.checksum ? { baseChecksum: image.asset.checksum } : {}),
@@ -94,7 +117,9 @@ export function createWriteBack(dependencies: Dependencies | (() => Dependencies
       if (!result.ok) throw new Error(result.error);
     },
     committedImage: (): ImageFocusImage | null => finished && uploaded ? {
-      ...image, baselineContentIdentity: `media:${uploaded.storageKey}`,
+      ...image, ...(project ? { project } : {}), baselineContentIdentity: project
+        ? imageEditDocumentContentIdentity({document:project,baseStorageKey:image.asset!.storageKey,outputStorageKey:uploaded.storageKey}) : `media:${uploaded.storageKey}`,
+      url: deps().mediaRemote.urlFor?.(uploaded.storageKey, canvasId) ?? image.url,
       asset: { id: outputAssetId, ...uploaded }
     } : null,
     isPending: () => !finished && (begun || frozen !== null),

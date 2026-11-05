@@ -1,4 +1,7 @@
 /** Actual HTTP adapters, Media ingest, edit receipts and domain commands; no renderer. */
+import { savedProject } from "./saved-project.test-support.js";
+import { createMediaFormatRegistry } from "../../../../../client/web/services/media-service/src/application/media-formats.js";
+import { photocraftMediaFormat, createProcessOnlyVerifier } from "../../project-verifier/src/index.js";
 import http from "node:http";
 import { afterEach, expect, it } from "vitest";
 import { applyCanvasCommands, createEmptyWoohaa3ServerCanvas, type ServerCanvas, type MediaStorage } from "@woohaa3/contracts";
@@ -46,7 +49,8 @@ async function harness(options = { loseCompleteResponse: false }) {
   const edit = new EditCompletionService({ completions: new InMemoryEditCompletionRepository(), resolveRoom: async () => room,
     publisher: { registerEntry: entry => history.registerEntry(entry), listEntriesForNode: (id, node) => history.listEntriesForNode(id, node) },
     mediaVerifier: { exists: async id => objects.has(id) }, now: () => now });
-  const mediaHandler = createMediaRequestHandler({ storage });
+  const formats = createMediaFormatRegistry(); formats.register(photocraftMediaFormat(createProcessOnlyVerifier()));
+  const mediaHandler = createMediaRequestHandler({ storage, formats });
   const editHandler = createEditCompletionRequestHandler({ service: edit, canvasExists: async id => id === canvas.id });
   const server = http.createServer((req, res) => { void (async () => {
     if (await mediaHandler(req, res) || await editHandler(req, res)) return;
@@ -85,4 +89,27 @@ it("rejects a changed canonical baseline before upload", async () => {
   const h = await harness(); h.changeSource();
   await expect(h.writer.apply(async () => png)).rejects.toThrow("原图已变化");
   expect(h.counts()).toEqual({ submissions: 0, uploads: 0 }); await h.writer.abandon();
+});
+
+it("atomically saves the editable project with its PNG and resolves the saved project on reopen", async () => {
+  const h = await harness(); const bytes = savedProject(1,1);
+  await h.writer.apply(async()=>png,async()=>bytes);
+  const image=resolveImageFocusImage(h.canvas(),"image")!;
+  expect(image.project?.engine).toBe("photocraft");
+  expect(h.objects.get(image.project!.project.storageKey)?.bytes).toEqual(bytes);
+  expect(h.objects.get(image.asset!.storageKey)?.bytes).toEqual(png);
+  expect(image.baselineContentIdentity).toMatch(/^image-project:/);
+  expect(h.counts()).toEqual({submissions:1,uploads:2});
+  expect(h.writer.committedImage()?.baselineContentIdentity).toBe(image.baselineContentIdentity);
+});
+
+it.runIf(Boolean(process.env.WOOHAA_TEST_PROJECT_FIXTURE))("saves bytes exported by the real native engine through verified project ingest and node commit", async()=>{
+  const {readFile}=await import("node:fs/promises");
+  const project=new Uint8Array(await readFile(process.env.WOOHAA_TEST_PROJECT_FIXTURE!));
+  const rendered=new Uint8Array(await readFile(process.env.WOOHAA_TEST_PROJECT_FIXTURE!+".png"));
+  const h=await harness();await h.writer.apply(async()=>rendered,async()=>project);
+  const image=resolveImageFocusImage(h.canvas(),"image")!;
+  expect(image.project?.canvasWidth).toBe(16);expect(image.project?.canvasHeight).toBe(16);
+  expect(h.objects.get(image.project!.project.storageKey)?.bytes).toEqual(project);
+  expect(h.objects.get(image.asset!.storageKey)?.bytes).toEqual(rendered);
 });

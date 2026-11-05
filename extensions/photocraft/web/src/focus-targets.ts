@@ -1,4 +1,4 @@
-import { decodeImageEditDocument, imageEditDocumentContentIdentity } from "../../protocol/src/index.js";
+import { isImageProjectDocument, type ImageProjectDocument, decodeImageEditDocument, imageEditDocumentContentIdentity } from "../../protocol/src/index.js";
 /**
  * 图片聚焦目标的解析。
  *
@@ -67,6 +67,7 @@ export function imageFocusTargetIds(canvas: unknown): string[] {
 /** 可聚焦图片节点对应的素材（供覆盖层把同一张图喂给 PhotoCraft）。 */
 export type ImageFocusImage = {
   url: string; name: string; baselineContentIdentity?: string;
+  project?: ImageProjectDocument; sourceWidth?: number; sourceHeight?: number;
   asset?: { id: string; storageKey: string; checksum?: string; contentType?: string; size?: number };
 };
 
@@ -88,7 +89,7 @@ export function resolveImageFocusImage(canvas: unknown, nodeId: string): ImageFo
   const baselineContentIdentity = storageKey
     ? edit.ok ? imageEditDocumentContentIdentity({ document: edit.value, baseStorageKey, outputStorageKey: storageKey }) : `media:${storageKey}`
     : undefined;
-  return { url: valueUrl(asset.url as string, value.id), name: fileNameFor(asset.url as string, asset.title ?? ""),
+  return { ...(edit.ok && isImageProjectDocument(edit.value) ? { project: edit.value } : {}), url: valueUrl(asset.url as string, value.id), name: fileNameFor(asset.url as string, asset.title ?? ""),
     ...(storageKey ? { baselineContentIdentity, asset: { id: asset.id, storageKey,
       checksum: metadata.checksum, contentType: metadata.contentType, size: metadata.size } } : {}) };
 }

@@ -16,12 +16,23 @@ async function rustTreeHash(directory, extensions=['.rs']) {
   }}
   await walk(directory);return hash.digest('hex');
 }
+export function desktopConfig(config, client) {
+  const desktop = join(client, 'desktop');
+  return {
+    ...config,
+    build: { ...config.build, frontendDist: join(client, 'web/frontend/dist') },
+    bundle: { ...config.bundle,
+      icon: config.bundle.icon.map(file => resolve(desktop, file)),
+      macOS: { ...config.bundle.macOS, entitlements: resolve(desktop, config.bundle.macOS.entitlements) }
+    }
+  };
+}
 export function validateGraph(metadata) {
   const copies = metadata.packages.filter(p => p.name === 'wgpu');
   if (copies.length !== 1 || copies[0].version !== '30.0.1') throw new Error(`Expected one wgpu 30.0.1 type identity; got ${copies.map(p => p.id).join(', ')}`);
   return copies[0].id;
 }
-export async function assemble({ clientRoot, photocraftSource, out, cargo = 'cargo', toolchain = '1.97.1', check = false, build = false, release = false, frontendDist }) {
+export async function assemble({ clientRoot, photocraftSource, out, cargo = 'cargo', toolchain = '1.97.1', check = false, build = false, release = false, frontendDist, production = false }) {
   if (!clientRoot || !photocraftSource) throw new Error('--client-root and --photocraft-source are required');
   const client = await realpath(clientRoot), source = await realpath(photocraftSource);
   const sourceRevision = execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -39,22 +50,32 @@ export async function assemble({ clientRoot, photocraftSource, out, cargo = 'car
   await mkdir(join(output, 'host'), { recursive: true });
   const dep = path => `{ path = ${quote(path)} }`;
   const adapter = `[package]\nname = "woohaa-photocraft-native-adapter"\nversion = "0.1.0"\nedition = "2024"\nbuild = "build.rs"\n[lib]\npath = ${quote(join(root, 'native-adapter/src/lib.rs'))}\n[features]\ndefault = []\ndesktop = ["dep:woohaa_desktop_host", "dep:photocraft-gpu"]\nnative-ui = ["desktop", "dep:photocraft-ui-egui", "dep:egui", "dep:eframe", "dep:parking_lot", "dep:bevy", "dep:rfd", "dep:tempfile"]\n[dependencies]\nphotocraft-engine = ${dep(join(source, 'crates/engine'))}\nserde_json = "1"\nsha2 = "0.10"\nrfd = {version="0.16",optional=true}\ntempfile = {version="3",optional=true}\nphotocraft-io = ${dep(join(source, 'crates/io'))}\nphotocraft-raster = ${dep(join(source, 'crates/raster'))}\neframe = { version = "0.36", default-features = false, features = ["wgpu"], optional = true }\nparking_lot = { version = "0.12", optional = true }\nbevy = { version = "=0.20.0", default-features = false, optional = true }\nphotocraft-gpu = { path = ${quote(join(source, 'crates/gpu'))}, optional = true }\negui = { version = "0.36", default-features = false, optional = true }\nphotocraft-ui-egui = { path = ${quote(join(source, 'crates/ui-egui'))}, optional = true }\nwoohaa_desktop_host = { path = ${quote(join(client, 'desktop'))}, optional = true }\n`;
-  const host = `[package]\nname = "woohaa-photocraft-native-host"\nversion = "0.1.0"\nedition = "2024"\n[lib]\npath = ${quote(join(root, 'native-host/src/lib.rs'))}\n[[bin]]\nname = "woohaa-photocraft-experimental"\npath = ${quote(join(root, 'native-host/src/main.rs'))}\n[dependencies]\nwoohaa-photocraft-native-adapter = { path = "../adapter", features = ["native-ui"] }\nwoohaa_desktop_host = { path = ${quote(join(client, 'desktop'))}, features = ["diagnostic-performance"] }\n# Exact pin prevents a second device/queue Rust type identity.\nwgpu = { version = "=30.0.1", default-features = false }\n`;
-  await writeFile(join(output, 'Cargo.toml'), '[workspace]\nresolver = "3"\nmembers = ["adapter", "host"]\n');
+  const host = `[package]\nname = "woohaa-photocraft-native-host"\nversion = "0.1.0"\nedition = "2024"\n[lib]\npath = ${quote(join(root, 'native-host/src/lib.rs'))}\n[[bin]]\nname = "${production ? 'woohaa-desktop' : 'woohaa-photocraft-experimental'}"\npath = ${quote(production ? join(output, 'host/main.rs') : join(root, 'native-host/src/main.rs'))}\n[dependencies]\nwoohaa-photocraft-native-adapter = { path = "../adapter", features = ["native-ui"] }\nwoohaa_desktop_host = { path = ${quote(join(client, 'desktop'))}${production ? '' : ','} ${production ? '' : 'features = ["diagnostic-performance"]'} }\n# Exact pin prevents a second device/queue Rust type identity.\nwgpu = { version = "=30.0.1", default-features = false }\n`;
+  await writeFile(join(output, 'Cargo.toml'), '[workspace]\nresolver = "3"\nmembers = ["adapter", "host"]\n' + (production ? '\n[profile.release]\nlto = "thin"\nincremental = false\n' : ''));
   await writeFile(join(output, 'adapter/Cargo.toml'), adapter);
-  await writeFile(join(output, 'host/Cargo.toml'), host);
+  await writeFile(join(output, 'host/Cargo.toml'), host + (production ? '\ntauri = { version = "=2.12.3", default-features = false }\n[build-dependencies]\ntauri-build = { version = "=2.7.2", features = [] }\n' : ''));
+  if (production) {
+    await writeFile(join(output, 'host/main.rs'), '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]\nfn main() { woohaa_desktop_host::desktop_entry::run(vec![woohaa_photocraft_native_host::editor_factory()]); }\n');
+    await writeFile(join(output, 'host/build.rs'), 'fn main() { tauri_build::build(); }\n');
+    const config = desktopConfig(JSON.parse(await readFile(join(client, 'desktop/tauri.conf.json'), 'utf8')), client);
+    config.bundle.resources = { ...config.bundle.resources,
+      [join(source, 'LICENSE-MIT')]: 'licenses/photocraft/LICENSE-MIT',
+      [join(source, 'LICENSE-APACHE')]: 'licenses/photocraft/LICENSE-APACHE'
+    };
+    await writeFile(join(output, 'host/tauri.conf.json'), JSON.stringify(config, null, 2) + '\n');
+  }
   const loaderHelper=join(client,'scripts/lib/desktop-host-package.mjs');
   const {prepareStartupFrontend}=await import(pathToFileURL(loaderHelper).href);
   const frontend=resolve(frontendDist ?? join(client,'web/frontend',build||check?'dist':'public'));
   const startupFrontend=prepareStartupFrontend(frontend,join(output,'startup-frontend'));
-  const tauriOverride={identifier:'com.woohaa3.photocraft.experimental',productName:'WooHaa3 PhotoCraft Experimental',build:{frontendDist:startupFrontend}};
+  const tauriOverride=production ? {build:{frontendDist:startupFrontend}} : {identifier:'com.woohaa3.photocraft.experimental',productName:'WooHaa3 PhotoCraft Experimental',build:{frontendDist:startupFrontend}};
   const run = args => execFileSync(cargo, [`+${toolchain}`, ...args, '--manifest-path', join(output, 'Cargo.toml')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, TAURI_CONFIG: JSON.stringify(tauriOverride) } });
   // A present lock is never silently rewritten. Delete it explicitly to resolve a new assembly.
   try { await readFile(join(output, 'Cargo.lock')); } catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(join(output, 'Cargo.lock'), await readFile(join(client, 'desktop/Cargo.lock'))); run(['metadata', '--format-version', '1', '--all-features']); }
   const metadata = JSON.parse(run(['metadata', '--locked', '--format-version', '1', '--all-features']));
   const wgpuIdentity = validateGraph(metadata);
   const lock = await readFile(join(output, 'Cargo.lock'));
-  const identity = { schemaVersion: 1, profile: release ? 'release' : 'dev', applicationId:'com.woohaa3.photocraft.experimental', updateChannel:'photocraft-experimental', compiler: rustc.trim(), target, editorApiMajor: 1, editorApiSha256: digest(port), wgpuIdentity, lockSha256: digest(lock), clientLockSha256: digest(await readFile(join(client, 'desktop/Cargo.lock'))), photocraftRevision: sourceRevision, photocraftPatchSha256: digest(await readFile(join(root, 'web/patch/0001-external-canvas-overlay.patch'))), photocraftLockSha256: digest(upstreamLock), photocraftEngineSha256: digest(await readFile(join(source, 'crates/engine/src/lib.rs'))), photocraftRetouchSha256: digest(await readFile(join(source, 'crates/engine/src/retouch_cmds.rs'))), adapterSourceSha256: digest(await readFile(join(root, 'native-adapter/src/lib.rs'))), sharedEnabled: true };
+  const identity = { schemaVersion: 1, profile: release ? 'release' : 'dev', applicationId:production ? JSON.parse(await readFile(join(client,'desktop/tauri.conf.json'),'utf8')).identifier : 'com.woohaa3.photocraft.experimental', updateChannel:production ? 'desktop' : 'photocraft-experimental', compiler: rustc.trim(), target, editorApiMajor: 1, editorApiSha256: digest(port), wgpuIdentity, lockSha256: digest(lock), clientLockSha256: digest(await readFile(join(client, 'desktop/Cargo.lock'))), photocraftRevision: sourceRevision, photocraftPatchSha256: digest(await readFile(join(root, 'web/patch/0001-external-canvas-overlay.patch'))), photocraftLockSha256: digest(upstreamLock), photocraftEngineSha256: digest(await readFile(join(source, 'crates/engine/src/lib.rs'))), photocraftRetouchSha256: digest(await readFile(join(source, 'crates/engine/src/retouch_cmds.rs'))), adapterSourceSha256: digest(await readFile(join(root, 'native-adapter/src/lib.rs'))), sharedEnabled: true };
   identity.startupLoaderSha256=digest(await readFile(join(startupFrontend,'index.html')));
   identity.startupHelperSha256=digest(await readFile(loaderHelper));
   identity.tauriConfigSha256=digest(JSON.stringify(tauriOverride));
@@ -74,7 +95,7 @@ export async function assemble({ clientRoot, photocraftSource, out, cargo = 'car
   identity.buildId = digest(JSON.stringify(identity));
   await writeFile(join(output, 'adapter/build.rs'), `fn main() { println!("cargo:rustc-env=WOOHAA_PHOTOCRAFT_BUILD_ID=${identity.buildId}"); }\n`);
   await writeFile(join(output, 'build-identity.json'), `${JSON.stringify(identity, null, 2)}\n`);
-  if (build) run(['build', '--locked', '-p', 'woohaa-photocraft-native-host', '--bin', 'woohaa-photocraft-experimental', ...(release ? ['--release'] : [])]);
+  if (build) run(['build', '--locked', '-p', 'woohaa-photocraft-native-host', '--bin', production ? 'woohaa-desktop' : 'woohaa-photocraft-experimental', ...(release ? ['--release'] : [])]);
   if (check) run(['check', '--locked', '--workspace']);
   return { output, identity };
 }
@@ -82,7 +103,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const args = process.argv.slice(2), options = {};
   for (let i = 0; i < args.length; i++) {
     const key = { '--client-root': 'clientRoot', '--photocraft-source': 'photocraftSource', '--out': 'out', '--toolchain': 'toolchain', '--frontend': 'frontendDist' }[args[i]];
-    if (args[i] === '--check') options.check = true;
+    if (args[i] === '--production') options.production = true;
+    else if (args[i] === '--check') options.check = true;
     else if(args[i] === '--build') options.build = true;
     else if(args[i] === '--release') options.release = true;
     else if (key && args[i + 1]) options[key] = args[++i];

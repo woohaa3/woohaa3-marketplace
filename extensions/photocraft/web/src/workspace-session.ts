@@ -139,6 +139,18 @@ export class WorkspaceSession {
   rememberNode(canvasId: string, nodeId: string, image: ImageFocusImage) { this.lastNode = { canvasId, nodeId, image }; this.publish(); }
   /** 引擎或文档尚未就绪时的目标节点：覆盖层据此把加载进度放到节点上，而不是接管画布。 */
   get pendingNode() { return this.lastNode; }
+  private async readNodeImage(image: ImageFocusImage, lease: PageLease) {
+    const url = image.project ? lease.ctx.mediaRemote.urlFor(image.project.project.storageKey, lease.canvasId) : resolvePublicUrl(image.url);
+    const response = await fetch(url, { credentials: "same-origin", signal: this.abort.signal });
+    if (!response.ok) throw new Error(`无法读取${image.project ? "工程" : "图片"}（HTTP ${response.status}）`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  canCloseSaved(id: string) {
+    const doc = this.documents.get(id), current = this.engine?.state().documents?.find(d => d.id === id);
+    return Boolean(doc?.source.kind === "node" && doc.source.image.project && !doc.conflict && !doc.attempt
+      && !this.applying.has(id) && !this.state?.operation && !this.state?.modal && current
+      && doc.appliedRevision === current.revision);
+  }
   async openNode(canvasId: string, nodeId: string, image: ImageFocusImage) {
     this.lastNode = { canvasId, nodeId, image };
     const key = JSON.stringify([canvasId, nodeId]);
@@ -147,12 +159,10 @@ export class WorkspaceSession {
     const pending = this.pendingNodes.get(key); if (pending) return pending;
     const flight = this.open({ kind: "node", canvasId, nodeId, image }, async () => {
       const lease = this.requirePage(canvasId);
-      const response = await fetch(resolvePublicUrl(image.url), { credentials: "same-origin", signal: this.abort.signal });
-      if (!response.ok) throw new Error(`无法读取图片（HTTP ${response.status}）`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await this.readNodeImage(image, lease);
       if (this.page !== lease) throw new Error("页面已离开，图片未打开，请重试");
       return bytes;
-    }, image.name).then(id => { if (this.lastNode?.canvasId === canvasId && this.lastNode.nodeId === nodeId) this.lastNode = null; return id; }).finally(() => this.pendingNodes.delete(key));
+    }, image.project ? "document.pcraft" : image.name).then(id => { if (this.lastNode?.canvasId === canvasId && this.lastNode.nodeId === nodeId) this.lastNode = null; return id; }).finally(() => this.pendingNodes.delete(key));
     this.pendingNodes.set(key, flight); return flight;
   }
   async retry() {
@@ -178,7 +188,10 @@ export class WorkspaceSession {
       const bytes = await read();
       if (this.disposed || this.recovery || this.page !== lease) throw new Error("打开已取消");
       const id = await this.engine.open(crypto.randomUUID(), name, bytes, source.kind === "node" ? source.nodeId : null);
-      this.documents.set(id, { id, lifetime: ++this.lifetime, source, appliedRevision: null });
+      if (source.kind === "node") {
+        source.image = { ...source.image, sourceWidth: source.image.project?.sourceWidth ?? source.image.sourceWidth, sourceHeight: source.image.project?.sourceHeight ?? source.image.sourceHeight };
+      }
+      this.documents.set(id, { id, lifetime: ++this.lifetime, source, appliedRevision: source.kind === "node" && source.image.project ? this.engine.state().documents?.find(d => d.id === id)?.revision ?? null : null });
       if (this.recovery || this.disposed || this.page !== lease) {
         this.targetId = id; this.visible = false;
         throw new Error("文档已保留在本地工作区，请返回来源或保存后关闭");
@@ -237,6 +250,7 @@ export class WorkspaceSession {
     if (this.fatal || doc.conflict) return "error";
     if (this.refreshing || this.applying.has(doc.id)) return "saving";
     const engineDoc = this.state?.documents?.find((candidate) => candidate.id === doc.id);
+    if (doc.source.kind === "node" && doc.source.image.project && engineDoc?.revision === doc.appliedRevision) return "saved";
     return (engineDoc?.dirty ?? this.state?.dirty) ? "unsaved" : "saved";
   }
   /**
@@ -304,9 +318,7 @@ export class WorkspaceSession {
     this.refreshing = true;
     try {
       this.engine?.settle();
-      const response = await fetch(resolvePublicUrl(image.url), { credentials: "same-origin", signal: this.abort.signal });
-      if (!response.ok) throw new Error(`无法读取恢复后的图片（HTTP ${response.status}）`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await this.readNodeImage(image, lease);
       if (this.page !== lease || this.recovery || this.disposed) return;
       if (this.documents.get(pending.documentId) !== doc) return;
       if (this.targetId !== doc.id) {
@@ -355,16 +367,18 @@ export class WorkspaceSession {
   }
   async apply(id: string) {
     const doc = this.documents.get(id); if (!doc || doc.source.kind !== "node" || !this.engine) throw new Error("此文档没有来源节点");
-    if (this.applying.has(id)) return;
+    if (this.applying.has(id) || this.canCloseSaved(id)) return;
     const source = doc.source;
     const page = this.requirePage(source.canvasId);
     if (!page.ctx.canvasSession.isWritable() || doc.conflict) throw new Error(doc.conflict ?? "当前画布只读");
     this.engine.settle();
     doc.attempt ??= { writer: createWriteBack(() => this.requirePage(source.canvasId).ctx, source.canvasId, source.nodeId, source.image), revision: this.engine.state().documents?.find(d => d.id === id)?.revision ?? this.state?.revision ?? null };
     const attempt = doc.attempt;
+    if (attempt.revision === null) { doc.attempt = undefined; throw new Error("文档尚未就绪，请稍后保存"); }
     this.applying.add(id); this.publish();
     try {
-      await attempt.writer.apply(async () => this.engine!.export(id, false, attempt.revision ?? undefined));
+      await attempt.writer.apply(async () => this.engine!.export(id, false, attempt.revision ?? undefined),
+        async () => this.engine!.export(id, true, attempt.revision ?? undefined));
       if (this.documents.get(id) !== doc) return;
       if (attempt.revision !== null) await this.engine!.markSaved?.(id, attempt.revision);
       doc.appliedRevision = attempt.revision;
@@ -386,13 +400,11 @@ export class WorkspaceSession {
     if (!image) throw new Error("源节点不可访问，请保存本地工程");
     this.engine.settle();
     if (this.documents.size >= 8) throw new Error("请先关闭另一份文档，为重载保留安全解码空间");
-    const response = await fetch(resolvePublicUrl(image.url), { credentials: "same-origin", signal: this.abort.signal });
-    if (!response.ok) throw new Error(`无法读取来源（HTTP ${response.status}）`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = await this.readNodeImage(image, lease);
     if (this.page !== lease || this.recovery) throw new Error("页面绑定已撤销");
     if (doc.attempt) await doc.attempt.writer.abandon();
     // Decode before closing the old tab. A corrupt replacement must never destroy local work.
-    const next = await this.engine.open(crypto.randomUUID(), image.name, bytes, source.nodeId);
+    const next = await this.engine.open(crypto.randomUUID(), image.project ? "document.pcraft" : image.name, bytes, source.nodeId);
     this.documents.set(next, { id: next, lifetime: ++this.lifetime, source: { ...source, image }, appliedRevision: null });
     await this.engine.close(id); this.documents.delete(id); await this.activate(next);
   }
@@ -423,6 +435,11 @@ export class WorkspaceSession {
     if (this.disposed) return;
     if (event.type === "photocraft:state") {
       this.state = event.state as EngineState;
+      const active = this.state.documentId ? this.documents.get(this.state.documentId) : undefined;
+      if (active?.source.kind === "node" && this.state.viewReady && this.state.docWidth && this.state.docHeight) {
+        active.source.image.sourceWidth ??= this.state.docWidth;
+        active.source.image.sourceHeight ??= this.state.docHeight;
+      }
       if (this.engine?.backend === "native" && this.state.documents) {
         const live = new Set(this.state.documents.map(doc => doc.id));
         let removed = false;

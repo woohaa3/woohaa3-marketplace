@@ -223,3 +223,21 @@ it("reveals a ready native node from metadata without waiting for a CPU frame",a
   expect(setImageFocusTexture.mock.calls.every(([value])=>value===null)).toBe(true);
   await act(async()=>{session.hide();});surface.remove();
 });
+
+it("closes a node document whose project revision is saved without a discard prompt", async()=>{
+  await act(async()=>{
+    session.documents.set("a",{id:"a",lifetime:1,source:{kind:"node",canvasId:"c",nodeId:"n",image:{url:"/api/media/a.png",name:"a.png",project:{} as never}},appliedRevision:0});
+    session.onClose?.("a");
+  });
+  expect(engine.close).toHaveBeenCalledWith("a");
+  expect(host.querySelector(".photocraft-overlay__confirm")).toBeNull();
+});
+it("prompts again when the document changed after its last saved project", async()=>{
+  await act(async()=>{
+    session.documents.set("a",{id:"a",lifetime:1,source:{kind:"node",canvasId:"c",nodeId:"n",image:{url:"/api/media/a.png",name:"a.png",project:{} as never}},appliedRevision:0});
+    engine.state().documents![0].revision=1;
+    session.onClose?.("a");
+  });
+  expect(engine.close).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("当前修改尚未保存");
+});

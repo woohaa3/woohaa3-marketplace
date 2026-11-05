@@ -18,6 +18,8 @@ export const IMAGE_PROJECT_ENGINE = "photocraft" as const;
  */
 export const PHOTOCRAFT_ENGINE_VERSION = "4e7a17cd5d5723313f459753663d0d155f047e19+woohaa-patterns-v1" as const;
 
+export const PHOTOCRAFT_OFFICIAL_ENGINE_VERSION = "e6d6fb45a40250f518d2e824236a8fdcaa4472c8+woohaa-native-v1" as const;
+
 /** 受支持的引擎版本集合：未知/过新引擎只读，不静默降级。 */
 export const SUPPORTED_PHOTOCRAFT_ENGINE_VERSIONS: readonly string[] = [
   "4e7a17cd5d5723313f459753663d0d155f047e19",
@@ -25,7 +27,8 @@ export const SUPPORTED_PHOTOCRAFT_ENGINE_VERSIONS: readonly string[] = [
   "4e7a17cd5d5723313f459753663d0d155f047e19+woohaa-blends-v1",
   "4e7a17cd5d5723313f459753663d0d155f047e19+woohaa-fill-v1",
   "4e7a17cd5d5723313f459753663d0d155f047e19+woohaa-styles-v1",
-  PHOTOCRAFT_ENGINE_VERSION
+  PHOTOCRAFT_ENGINE_VERSION,
+  PHOTOCRAFT_OFFICIAL_ENGINE_VERSION
 ];
 
 /**

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@woohaa3/frontend/extension-api";
+import { savedProject } from "./saved-project.test-support.js";
 import { WorkspaceSession } from "./workspace-session.js";
 import type { DirectRuntime, EngineState, RuntimeFactory } from "./direct-runtime.js";
 vi.mock("@woohaa3/frontend/extension-api", () => ({ resolvePublicUrl: (path: string) => path }));
@@ -13,7 +14,7 @@ export function sessionHarness() {
     open: vi.fn((_op: string, name: string, _bytes: Uint8Array, _nodeBinding?: string | null):string|Promise<string> => { const id = `doc-${++count}`; state = { ...state, documentId: id, documents: [...state.documents!, { id, name, revision: 0, dirty: false }] }; return id; }),
     activate: vi.fn((id: string): number | Promise<number> => { state = { ...state, documentId: id }; return 1; }),
     close: vi.fn((id: string) => { state = { ...state, documents: state.documents!.filter(d => d.id !== id) }; }),
-    export: vi.fn(():Uint8Array|Promise<Uint8Array> => png())
+    export: vi.fn((_id: string, project = false, _revision?: number):Uint8Array|Promise<Uint8Array> => project ? savedProject() : png())
   } satisfies DirectRuntime;
   const factory = vi.fn(async () => engine) as RuntimeFactory;
   const session = new WorkspaceSession("https://app.test/assets/", factory);
@@ -32,7 +33,7 @@ export function page(canvasId = "a", initialCanvas: unknown = null) {
     canvasNavigation: { requestEnterNodeFocus: vi.fn(async () => ({ ok: true })), requestEnterDocumentWorkspace: vi.fn(async () => ({ ok: true })), requestExitNodeFocus: vi.fn(async () => ({ ok: true })) },
     canvasSession: { isWritable: () => true }, appRouter: { navigate: vi.fn() },
     canvasRemote: { editBegin: vi.fn(async () => ({ ok: true, value: { baselineContentIdentity: "media:base.png" } })), editComplete: vi.fn(async () => ({ ok: true, receipt: { contentCommitted: true } })), editStatus: vi.fn(), editAbandon: vi.fn(async () => ({ ok: true })) },
-    mediaRemote: { upload: vi.fn(async () => ({ ok: true, media: { storageKey: "new.png", checksum: "a".repeat(64), contentType: "image/png", size: 33 } })) },
+    mediaRemote: { urlFor: vi.fn((key:string)=>`/api/media/${key}`), upload: vi.fn(async (input?: {file:File}) => ({ ok: true, media: { storageKey: input?.file.type.startsWith("application/") ? "project.pcraft" : "new.png", checksum: "a".repeat(64), contentType: input?.file.type ?? "image/png", size: 33 } })) },
     /** 测试钩子：替换工作画布并通知（模拟 WebSocket 权威回流）。 */
     __setWorkingCanvas(next: unknown) { working = next; for (const listener of listeners) listener(); }
   };
@@ -62,20 +63,20 @@ it("a revoked page stops new network stages while a frozen attempt can resume wi
   const h = sessionHarness(), ctx = page(); const detach = h.session.attachPage(ctx,"a"); await h.session.initialize(document.createElement("canvas"));
   const id = await h.session.openNode("a","n",image); h.publish(); h.session.documents.get(id)!.conflict = undefined;
   let resolve!: (value: unknown) => void; ctx.canvasRemote.editBegin.mockImplementationOnce(() => new Promise(r => { resolve = r as never; }));
-  const apply = h.session.apply(id); await Promise.resolve(); await Promise.resolve(); detach();
+  const apply = h.session.apply(id); for(let i=0;i<20;i++) await Promise.resolve(); detach();
   resolve({ ok: true, value: { baselineContentIdentity: "media:base.png" } });
   await expect(apply).rejects.toThrow("绑定已撤销"); expect(ctx.mediaRemote.upload).not.toHaveBeenCalled();
   const next = page(); h.session.attachPage(next,"a"); h.session.documents.get(id)!.conflict = undefined;
-  await h.session.apply(id); expect(next.mediaRemote.upload).toHaveBeenCalledOnce(); expect(ctx.canvasRemote.editComplete).not.toHaveBeenCalled();
+  await h.session.apply(id); expect(next.mediaRemote.upload).toHaveBeenCalledTimes(2); expect(ctx.canvasRemote.editComplete).not.toHaveBeenCalled();
 });
 it("r10 receipt never marks r11 applied, and a later apply gets fresh request identity", async () => {
   const h = sessionHarness(), ctx = page(); h.session.attachPage(ctx,"a"); await h.session.initialize(document.createElement("canvas"));
   const id = await h.session.openNode("a","n",image); h.publish(); h.revision(id,10);
   let resolve!: (v: unknown) => void; ctx.canvasRemote.editComplete.mockImplementationOnce(() => new Promise(r => { resolve = r as never; }));
-  const apply = h.session.apply(id); for(let i=0;i<8;i++) await Promise.resolve(); h.revision(id,11);
+  const apply = h.session.apply(id); for(let i=0;i<30;i++) await Promise.resolve(); h.revision(id,11);
   resolve({ ok: true, receipt: { contentCommitted: true } }); await apply; expect(h.session.documents.get(id)!.appliedRevision).toBe(10);
   const first = ctx.canvasRemote.editBegin.mock.calls[0];
-  ctx.canvasRemote.editBegin.mockResolvedValueOnce({ ok: true, value: { baselineContentIdentity: "media:new.png" } });
+  ctx.canvasRemote.editBegin.mockResolvedValueOnce({ ok: true, value: { baselineContentIdentity: h.session.documents.get(id)!.source.kind === "node" ? (h.session.documents.get(id)!.source as {image:{baselineContentIdentity:string}}).image.baselineContentIdentity : "" } });
   await h.session.apply(id); expect(ctx.canvasRemote.editBegin.mock.calls[1]).not.toEqual(first); expect(h.session.documents.get(id)!.appliedRevision).toBe(11);
 });
 it("enforces window capacity and single decoding without evicting documents", async () => {
@@ -89,7 +90,7 @@ it("closing chooses left neighbour, last close returns; recovery refuses edits a
   await h.session.openFile(new File(["x"],"a.png")); await h.session.openFile(new File(["x"],"b.png"));
   h.publish(); await h.session.close("doc-2"); expect(h.engine.activate).toHaveBeenLastCalledWith("doc-1");
   expect(h.session.revoke("disabled")).toBe(true); await expect(h.session.openFile(new File(["x"],"x.png"))).rejects.toThrow("停用");
-  expect(h.session.export("doc-1")).toEqual(png()); h.session.onEmpty=vi.fn(); await h.session.close("doc-1"); expect(h.session.onEmpty).toHaveBeenCalledOnce();
+  expect(h.session.export("doc-1")).toEqual(savedProject()); h.session.onEmpty=vi.fn(); await h.session.close("doc-1"); expect(h.session.onEmpty).toHaveBeenCalledOnce();
   h.session.dispose(); h.session.dispose(); expect(h.engine.dispose).toHaveBeenCalledOnce();
 });
 it("discarded late node read does not open a document after leaving its page", async () => {
@@ -268,7 +269,7 @@ it("awaits native activation and ignores stale active state while switching", as
 it("freezes the requested export revision and resets only attempts that failed before freezing",async()=>{
   const h=sessionHarness();h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));const id=await h.session.openNode("a","n",image);h.publish();h.revision(id,10);
   h.engine.export.mockRejectedValueOnce(new Error("stale revision"));await expect(h.session.apply(id)).rejects.toThrow("stale revision");expect(h.session.documents.get(id)!.attempt).toBeUndefined();
-  h.revision(id,11);await h.session.apply(id);expect(h.engine.export).toHaveBeenLastCalledWith(id,false,11);
+  h.revision(id,11);await h.session.apply(id);expect(h.engine.export).toHaveBeenCalledWith(id,false,11);expect(h.engine.export).toHaveBeenLastCalledWith(id,true,11);
 });
 it("removes native UI-closed tabs but retains unresolved frozen write attempts",async()=>{
   const h=sessionHarness();Object.defineProperty(h.engine,"backend",{value:"native"});h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));
@@ -284,4 +285,19 @@ it("keeps a pending native decode in the recovery owner instead of disposing it 
   let finish!:(id:string)=>void;h.engine.open.mockImplementationOnce(()=>new Promise<string>(resolve=>{finish=resolve;}));
   const opening=h.session.openFile(new File(["a"],"pending.png"));for(let i=0;i<6;i++)await Promise.resolve();
   expect(h.session.revoke("disabled")).toBe(true);finish("native-decoded");await expect(opening).rejects.toThrow("保留在本地");expect(h.session.documents.has("native-decoded")).toBe(true);expect(h.session.recovery).toBe("disabled");expect(h.engine.dispose).not.toHaveBeenCalled();
+});
+
+it("reopens a saved node project instead of its flattened PNG and does not silently fall back on failure", async()=>{
+  const h=sessionHarness(),ctx=page();ctx.mediaRemote.urlFor=vi.fn((key:string)=>`/api/media/${key}`);
+  h.session.attachPage(ctx,"a");await h.session.initialize(document.createElement("canvas"));
+  const project={version:"woohaa-image-project-v1",engine:"photocraft",engineVersion:"e6d6fb45a40250f518d2e824236a8fdcaa4472c8+woohaa-native-v1",formatVersion:1,baseAssetId:"base",sourceWidth:2,sourceHeight:2,canvasWidth:2,canvasHeight:2,documentContentHash:"a".repeat(16),sourceAssetIds:["base"],project:{storageKey:"saved.pcraft",checksum:"b".repeat(64),contentType:"application/vnd.woohaa.photocraft-project",size:100}} as const;
+  const saved={...image,project:project as never};
+  const id=await h.session.openNode("a","n",saved);h.publish();
+  expect(fetch).toHaveBeenCalledWith("/api/media/saved.pcraft",expect.anything());
+  expect(h.engine.open).toHaveBeenCalledWith(expect.any(String),"document.pcraft",expect.any(Uint8Array),"n");
+  expect(h.session.canCloseSaved(id)).toBe(true);
+  await h.session.close(id);
+  vi.mocked(fetch).mockResolvedValueOnce({ok:false,status:404} as Response);
+  await expect(h.session.openNode("a","n",saved)).rejects.toThrow("工程");
+  expect(h.engine.open).toHaveBeenCalledTimes(1);
 });

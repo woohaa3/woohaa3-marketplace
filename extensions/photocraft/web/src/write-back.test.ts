@@ -85,3 +85,17 @@ it("a confirmed conflict can be discarded without resubmitting the image", async
   expect(deps.canvasRemote.editAbandon).toHaveBeenCalledTimes(2);
   expect(deps.canvasRemote.editComplete).toHaveBeenCalledTimes(1);
 });
+
+it("does not commit a PNG without its project; retries reuse both frozen exports", async()=>{
+  const { savedProject } = await import("./saved-project.test-support.js");
+  const {deps,writer,exportPng}=harness();
+  const project=vi.fn(async()=>savedProject(1234,987));
+  const original=deps.mediaRemote.upload.getMockImplementation()!;
+  deps.mediaRemote.upload.mockImplementationOnce(original).mockResolvedValueOnce({ok:false,error:"project upload failed"} as never);
+  await expect(writer.apply(exportPng,project)).rejects.toThrow("project upload failed");
+  expect(deps.canvasRemote.editComplete).not.toHaveBeenCalled();
+  deps.mediaRemote.upload.mockResolvedValueOnce({ok:true,media:{storageKey:"project.pcraft",checksum:"b".repeat(64),contentType:"application/vnd.woohaa.photocraft-project",size:100}});
+  await writer.apply(exportPng,project);
+  expect(exportPng).toHaveBeenCalledTimes(1);expect(project).toHaveBeenCalledTimes(1);
+  expect(deps.canvasRemote.editComplete.mock.calls[0]![0]).toMatchObject({media:{project:{storageKey:"project.pcraft"},imageEdit:{engine:"photocraft"}}});
+});

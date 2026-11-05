@@ -14,7 +14,8 @@ export function createPhotocraftPlugin(): ExtensionPlugin {
     name: "photocraft",
     label: "PhotoCraft 图片编辑",
     configPrefix: "extensions.photocraft",
-    inject: { optional: ["capabilities", "mediaFormats"] },
+    // 注册面由宿主按扩展作用域通过 ctx.extend 注入；不是全局 Cordis 服务。
+    inject: [],
     Config: defineConfigSchema({}),
     apply(ctx) {
       if (!ctx.capabilities) throw new Error("宿主不支持能力注册");

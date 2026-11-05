@@ -34,7 +34,6 @@ export async function tryCreateNativeRuntime(options: Parameters<RuntimeFactory>
   const { onEvent } = options;
   const canvas = options.target ?? options.canvas;
   const session = crypto.randomUUID(), generation = 1;
-  let lastRenderError = "";
   let requestId = 0, sequence = 0, layoutGeneration = 0, disposed = false, enabled = true, shown = false, activation = 0;
   let inputReady = false;
   let inputInFlight = false, framePending = false, pollTimer: ReturnType<typeof setTimeout> | undefined;

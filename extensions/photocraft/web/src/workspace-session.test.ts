@@ -10,10 +10,10 @@ export function sessionHarness() {
   const engine = {
     state: () => state, show: vi.fn(() => 1), hide: vi.fn(), input: vi.fn(), focus: vi.fn(), ack: vi.fn(), dispose: vi.fn(),
     settle: vi.fn(() => { if (state.operation) throw new Error("当前操作"); return state; }),
-    open: vi.fn((_op: string, name: string) => { const id = `doc-${++count}`; state = { ...state, documentId: id, documents: [...state.documents!, { id, name, revision: 0, dirty: false }] }; return id; }),
-    activate: vi.fn((id: string) => { state = { ...state, documentId: id }; return 1; }),
+    open: vi.fn((_op: string, name: string, _bytes: Uint8Array, _nodeBinding?: string | null):string|Promise<string> => { const id = `doc-${++count}`; state = { ...state, documentId: id, documents: [...state.documents!, { id, name, revision: 0, dirty: false }] }; return id; }),
+    activate: vi.fn((id: string): number | Promise<number> => { state = { ...state, documentId: id }; return 1; }),
     close: vi.fn((id: string) => { state = { ...state, documents: state.documents!.filter(d => d.id !== id) }; }),
-    export: vi.fn(() => png())
+    export: vi.fn(():Uint8Array|Promise<Uint8Array> => png())
   } satisfies DirectRuntime;
   const factory = vi.fn(async () => engine) as RuntimeFactory;
   const session = new WorkspaceSession("https://app.test/assets/", factory);
@@ -53,7 +53,7 @@ beforeEach(() => vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuff
 it("initialization merges, node identity deduplicates, copied nodes and same-name files stay separate", async () => {
   const h = sessionHarness(); h.session.attachPage(page(), "a"); const canvas = document.createElement("canvas");
   const [a,b] = await Promise.all([h.session.initialize(canvas),h.session.initialize(canvas)]); expect(a).toBe(b); expect(h.factory).toHaveBeenCalledOnce();
-  const id = await h.session.openNode("a","n",image); h.publish(); h.session.hide(); await h.session.openNode("a","n",image);
+  const id = await h.session.openNode("a","n",image); expect(h.engine.open.mock.calls[0]?.[3]).toBe("n"); h.publish(); h.session.hide(); await h.session.openNode("a","n",image);
   expect(h.engine.open).toHaveBeenCalledOnce(); expect(h.session.documents.has(id)).toBe(true);
   await h.session.openNode("a","copy",image); await h.session.openFile(new File(["x"],"same.png")); await h.session.openFile(new File(["x"],"same.png"));
   expect(h.session.documents.size).toBe(4);
@@ -254,4 +254,34 @@ it("closes the old tab without exceeding the window cap or faking success when r
   h.session.receive({ type: "photocraft:state", state: { ...h.state, documentId: restored!.id } });
   expect(h.session.activeNodeId()).toBe("n");
   expect(h.session.error).toBeNull();
+});
+it("awaits native activation and ignores stale active state while switching", async () => {
+  const h=sessionHarness();h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));
+  const first=await h.session.openFile(new File(["a"],"first.png"));const second=await h.session.openFile(new File(["b"],"second.png"));h.publish();
+  let finish!:(value:number)=>void;h.engine.activate.mockImplementationOnce(()=>new Promise<number>(resolve=>{finish=resolve;}));
+  const switching=h.session.activate(first);for(let i=0;i<4;i++)await Promise.resolve();
+  const calls=h.engine.activate.mock.calls.length;
+  h.session.receive({type:"photocraft:state",state:{...h.state,documentId:second}});
+  expect(h.engine.activate).toHaveBeenCalledTimes(calls);expect(h.session.targetId).toBe(first);
+  finish(1);await switching;expect(h.session.targetId).toBe(first);
+});
+it("freezes the requested export revision and resets only attempts that failed before freezing",async()=>{
+  const h=sessionHarness();h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));const id=await h.session.openNode("a","n",image);h.publish();h.revision(id,10);
+  h.engine.export.mockRejectedValueOnce(new Error("stale revision"));await expect(h.session.apply(id)).rejects.toThrow("stale revision");expect(h.session.documents.get(id)!.attempt).toBeUndefined();
+  h.revision(id,11);await h.session.apply(id);expect(h.engine.export).toHaveBeenLastCalledWith(id,false,11);
+});
+it("removes native UI-closed tabs but retains unresolved frozen write attempts",async()=>{
+  const h=sessionHarness();Object.defineProperty(h.engine,"backend",{value:"native"});h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));
+  const first=await h.session.openFile(new File(["a"],"first.png"));const second=await h.session.openFile(new File(["b"],"second.png"));h.publish();
+  h.session.receive({type:"photocraft:state",state:{...h.state,documentId:second,documents:h.state.documents!.filter(d=>d.id!==first)}});expect(h.session.documents.has(first)).toBe(false);
+  const empty=vi.fn();h.session.onEmpty=empty;
+  const pending=h.session.documents.get(second)!;pending.attempt={revision:1,writer:{} as never};
+  h.session.receive({type:"photocraft:state",state:{...h.state,documentId:null,documents:[]}});expect(h.session.documents.has(second)).toBe(true);expect(empty).not.toHaveBeenCalled();
+  pending.attempt=undefined;h.session.receive({type:"photocraft:state",state:{...h.state,documentId:null,documents:[]}});expect(h.session.documents.size).toBe(0);expect(empty).toHaveBeenCalledOnce();expect(h.session.visible).toBe(false);
+});
+it("keeps a pending native decode in the recovery owner instead of disposing it on revoke",async()=>{
+  const h=sessionHarness();h.session.attachPage(page(),"a");await h.session.initialize(document.createElement("div"));
+  let finish!:(id:string)=>void;h.engine.open.mockImplementationOnce(()=>new Promise<string>(resolve=>{finish=resolve;}));
+  const opening=h.session.openFile(new File(["a"],"pending.png"));for(let i=0;i<6;i++)await Promise.resolve();
+  expect(h.session.revoke("disabled")).toBe(true);finish("native-decoded");await expect(opening).rejects.toThrow("保留在本地");expect(h.session.documents.has("native-decoded")).toBe(true);expect(h.session.recovery).toBe("disabled");expect(h.engine.dispose).not.toHaveBeenCalled();
 });

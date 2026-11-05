@@ -10,7 +10,7 @@ export type PhotoCraftOverlayProps = { session: WorkspaceSession; onRelease(): v
 
 export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps) {
   const [, update] = useState(0);
-  const canvas = useRef<HTMLCanvasElement>(null), stage = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null);
   const [hole, setHole] = useState<DocumentRect | null>(null), [shown, setShown] = useState(false);
   const [closeId, setCloseId] = useState<string | null>(null), [downloaded, setDownloaded] = useState(false);
   const [reload, setReload] = useState(false);
@@ -78,7 +78,7 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     if (preview) {
       previewing.current = true;
       setShown(false); setHole(null);
-      engine?.show(false);
+      if (engine?.backend === "native") engine.hide(); else engine?.show(false);
       engine?.input(false);
       page?.ctx.canvasRuntime.setImageFocusTexture(null);
       page?.ctx.canvasRuntime.setImageFocus(null);
@@ -96,6 +96,19 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     if (!session.visible || !page || !node || preview) { session.onFrame = undefined; return; }
     const focus = createFocusSession(page.ctx.canvasRuntime, node.nodeId, () => stage.current);
     const activation = session.activation;
+    if (session.engine?.backend === "native") {
+      // Shared native textures have no CPU frame callback. Only project geometry;
+      // the desktop render owner supplies both native texture targets directly.
+      page.ctx.canvasRuntime.setImageFocusTexture(null);
+      const project = () => {
+        const current = session.state;
+        if (activation !== session.activation || current?.documentId !== session.targetId || !current.viewReady || !validRect(current.rect) || !validDocumentView(current.documentView)) return;
+        const dpr = window.devicePixelRatio || 1;
+        focus.presentMetadata({ width: Math.max(1,Math.round(current.rect[2]*dpr)), height: Math.max(1,Math.round(current.rect[3]*dpr)), rect:current.rect, documentView:current.documentView });
+      };
+      project(); const remove = session.subscribe(project);
+      return () => { remove(); focus.dispose(); };
+    }
     session.onFrame = frame => {
       if (activation !== session.activation || frame.documentId !== session.targetId || !validFrame(frame) || !validDocumentView(frame.documentView)
         || frame.revision !== session.state?.revision || String(frame.rect) !== String(session.state?.rect)) return false;
@@ -105,9 +118,9 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     };
     return () => { session.onFrame = undefined; focus.dispose(); };
   }, [session, page, node?.nodeId, session.visible, session.activation, preview?.url]);
-  const download = (id: string) => {
+  const download = async (id: string) => {
     try {
-      const bytes = session.export(id), url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/x-photocraft" }));
+      const bytes = await session.export(id), url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/x-photocraft" }));
       const link = document.createElement("a"); link.href = url;
       link.download = `${state?.documents?.find(d => d.id === id)?.name.replace(/\.[^.]+$/, "") ?? "document"}.pcraft`;
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); setDownloaded(true);
@@ -122,7 +135,8 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     finally { setBusy(false); }
   };
   // External documents draw the normal opaque pasteboard; only node documents punch through.
-  const displayed = node ? shown && ready : ready;
+  const native = session.engine?.backend === "native";
+  const displayed = native ? ready : node ? shown && ready : ready;
   // A node document is only a layer over the canvas, so it has no reason to cover the app before the
   // first frame exists: keep the canvas visible and report progress on the node itself. The engine
   // load happens before the document entry exists, so the remembered node target also counts.
@@ -179,8 +193,9 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
           {node && hole && validRect(hole) ? <rect x={hole[0]} y={hole[1]} width={hole[2]} height={hole[3]} fill="black" /> : null}
         </mask>
       </defs></svg>
-      <canvas ref={canvas} tabIndex={0} className="photocraft-overlay__frame" style={{ visibility: displayed && !preview ? "visible" : "hidden",
-        ...(node && hole && !preview ? { mask: `url(#${maskId})`, WebkitMask: `url(#${maskId})` } : {}) }} />
+      <div ref={canvas} tabIndex={0} className="photocraft-overlay__frame" style={{ visibility: (session.engine?.backend === "native" ? ready : displayed) && !preview ? "visible" : "hidden",
+        ...(session.engine?.backend === "native" ? { background: "transparent" } : {}),
+        ...(!native && node && hole && !preview ? { mask: `url(#${maskId})`, WebkitMask: `url(#${maskId})` } : {}) }} />
       {preview ? <img className="photocraft-overlay__preview" data-photocraft-history-media="true"
         src={resolvePublicUrl(preview.url)} alt="历史版本预览" draggable={false} /> : null}
       {pending ? <div className="photocraft-overlay__pending"><span className="photocraft-overlay__spinner" />{loadingText}</div>

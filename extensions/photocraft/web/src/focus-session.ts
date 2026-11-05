@@ -1,9 +1,10 @@
 import type { CanvasRuntimeService } from "@woohaa3/frontend/extension-api";
 import type { PhotoCraftFrame } from "./protocol.js";
 
+export type PhotoCraftFrameMetadata = Pick<PhotoCraftFrame, "width" | "height" | "rect" | "documentView">;
 type Rect = { x: number; y: number; width: number; height: number };
 /** All offsets are CSS pixels, independently of captured resolution/DPR. */
-export function frameProjection(nodeId: string, frame: PhotoCraftFrame, stage: Rect, surface: Rect, content: Rect | null) {
+export function frameProjection(nodeId: string, frame: PhotoCraftFrameMetadata, stage: Rect, surface: Rect, content: Rect | null) {
   const host = content ?? { x: 0, y: 0, width: surface.width, height: surface.height };
   return {
     version: "woohaa-image-focus-v1" as const, nodeId, presentationReady: true,
@@ -25,7 +26,7 @@ export function frameProjection(nodeId: string, frame: PhotoCraftFrame, stage: R
 }
 
 export function createFocusSession(runtime: CanvasRuntimeService, nodeId: string, stage: () => HTMLElement | null) {
-  let latest: PhotoCraftFrame | null = null;
+  let latest: PhotoCraftFrameMetadata | null = null;
   let disposed = false;
   const project = () => {
     const element = stage();
@@ -45,6 +46,11 @@ export function createFocusSession(runtime: CanvasRuntimeService, nodeId: string
       if (disposed) return false;
       latest = frame;
       runtime.setImageFocusTexture({ nodeId, width: frame.width, height: frame.height, pixels: new Uint8Array(frame.buffer) });
+      return project();
+    },
+    presentMetadata(frame: PhotoCraftFrameMetadata) {
+      if (disposed) return false;
+      latest = frame;
       return project();
     },
     clear() {

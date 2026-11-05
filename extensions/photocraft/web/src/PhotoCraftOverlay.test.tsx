@@ -18,15 +18,15 @@ beforeEach(async () => {
   await act(async()=>root.render(<PhotoCraftOverlay session={session} onRelease={()=>session.dispose()}/>));
 });
 afterEach(async()=>{await act(async()=>root.unmount());session.dispose();host.remove();vi.unstubAllGlobals();});
-it("retains the actual canvas across hiding and recovery; never renders an iframe", async()=>{
-  const canvas=host.querySelector("canvas");expect(canvas).not.toBeNull();expect(host.querySelector("iframe")).toBeNull();
+it("retains the input surface across hiding and recovery; never renders an iframe", async()=>{
+  const canvas=host.querySelector<HTMLDivElement>(".photocraft-overlay__frame");expect(canvas).not.toBeNull();expect(host.querySelector("iframe")).toBeNull();
   await act(async()=>{session.visible=true;session.publish();session.hide();session.revoke("disabled");});
-  expect(host.querySelector("canvas")).toBe(canvas);expect(engine.dispose).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")).toBe(canvas);expect(engine.dispose).not.toHaveBeenCalled();
 });
 it("keeps the editor masked while a target has no valid ready state",async()=>{
-  expect(host.querySelector("canvas")!.style.visibility).toBe("hidden");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("hidden");
   await act(async()=>{session.visible=true;session.targetId="b";session.receive({type:"photocraft:state",state:engine.state()});});
-  expect(host.querySelector("canvas")!.style.visibility).toBe("hidden");expect(host.textContent).toContain("正在准备画布");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("hidden");expect(host.textContent).toContain("正在准备画布");
 });
 it("asks explicitly before closing and keeps the document when cancelled",async()=>{
   await act(async()=>{session.documents.set("a",{id:"a",lifetime:1,source:{kind:"file",id:"external"},appliedRevision:null});session.onClose?.("a");});
@@ -40,13 +40,13 @@ it("keeps a revealed document visible during zoom, then gates the next activatio
     session.documents.set("a",{id:"a",lifetime:1,source:{kind:"file",id:"external"},appliedRevision:null});
     session.visible=true;session.targetId="a";session.receive({type:"photocraft:state",state:engine.state()});
   });
-  expect(host.querySelector("canvas")!.style.visibility).toBe("visible");expect(engine.focus).toHaveBeenCalledTimes(1);
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("visible");expect(engine.focus).toHaveBeenCalledTimes(1);
   await act(async()=>session.receive({type:"photocraft:state",state:{...engine.state(),viewReady:false}}));
-  expect(host.querySelector("canvas")!.style.visibility).toBe("visible");expect(host.textContent).not.toContain("正在准备画布");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("visible");expect(host.textContent).not.toContain("正在准备画布");
   await act(async()=>{session.activation++;session.publish();});
-  expect(host.querySelector("canvas")!.style.visibility).toBe("hidden");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("hidden");
   await act(async()=>session.receive({type:"photocraft:state",state:engine.state()}));
-  expect(host.querySelector("canvas")!.style.visibility).toBe("visible");expect(engine.focus).toHaveBeenCalledTimes(2);
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("visible");expect(engine.focus).toHaveBeenCalledTimes(2);
 });
 it("reports progress on the node before the document exists", async()=>{
   await act(async()=>session.rememberNode("c","node-1",{url:"/api/media/a.png",name:"a.png"}));
@@ -69,7 +69,7 @@ it("reports node loading on the node instead of covering the canvas, and keeps t
   expect(host.querySelector(".photocraft-overlay__stage--pending")).not.toBeNull();
   expect(host.querySelector(".photocraft-overlay__pending")?.textContent).toContain("正在准备画布");
   expect(host.querySelector(".photocraft-overlay__loading")).toBeNull();
-  expect(host.querySelector("canvas")!.style.visibility).toBe("hidden");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("hidden");
   await act(async()=>{
     session.documents.clear();
     session.documents.set("a",{id:"a",lifetime:2,source:{kind:"file",id:"external"},appliedRevision:null});
@@ -171,7 +171,7 @@ it("renders the controlled read-only preview, stops capture, then resumes the ed
   expect(engine.input).toHaveBeenLastCalledWith(false);
   expect(runtime.setImageFocusTexture).toHaveBeenLastCalledWith(null);
   expect(runtime.setImageFocus).toHaveBeenLastCalledWith(null);
-  expect(host.querySelector("canvas")!.style.visibility).toBe("hidden");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("hidden");
   const media = host.querySelector('[data-photocraft-history-media="true"]') as HTMLImageElement | null;
   expect(media?.getAttribute("src")).toBe("/api/canvas-node-history/c/node-1/e1/preview");
   // 预览期间不捕获、不投影迟到的帧。
@@ -187,7 +187,7 @@ it("renders the controlled read-only preview, stops capture, then resumes the ed
   expect(host.querySelector('[data-photocraft-history-media="true"]')).toBeNull();
   // 返回当前版本后按新内容矩形重新捕获并投影首帧。
   await act(async()=>{ session.receive({ type: "photocraft:frame", ...frame, id: 3 }); });
-  expect(host.querySelector("canvas")!.style.visibility).toBe("visible");
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("visible");
   expect(runtime.setImageFocus).toHaveBeenCalled();
   surface.remove();
 });
@@ -206,4 +206,20 @@ it("drops frames captured for a previous content rectangle after the drawer chan
   await act(async()=>{ session.receive({ type: "photocraft:state", state: { ...engine.state(), documentId: "n", rect: [0,0,500,300] } }); });
   await act(async()=>{ session.receive({ type: "photocraft:frame", ...base, id: 3, rect: [0,0,500,300] }); });
   expect(runtime.setImageFocusTexture.mock.calls.length).toBeGreaterThan(before);
+});
+it("reveals a ready native node from metadata without waiting for a CPU frame",async()=>{
+  Object.defineProperty(engine,"backend",{value:"native"});
+  const setImageFocus=vi.fn(),setImageFocusTexture=vi.fn();
+  const surface=document.createElement("div");surface.className="bevy-canvas-surface";document.body.append(surface);
+  vi.spyOn(surface,"getBoundingClientRect").mockReturnValue({x:0,y:0,left:0,top:0,width:800,height:600,right:800,bottom:600,toJSON(){}});
+  await act(async()=>{
+    session.page={canvasId:"c",generation:1,ctx:{canvasSession:{isWritable:()=>true},canvasRuntime:{setImageFocusPending:vi.fn(),setImageFocus,setImageFocusTexture,focusContentRect:()=>null,subscribeFocusContentRect:()=>()=>{}},dialogs:{getSnapshot:()=>({isModalActive:false}),subscribe:()=>()=>{}},focusExit:{register:()=>()=>{}},pageLeave:{register:()=>()=>{}}} as never};
+    session.documents.set("a",{id:"a",lifetime:1,source:{kind:"node",canvasId:"c",nodeId:"n",image:{}} as never,appliedRevision:0});
+    session.visible=true;session.targetId="a";session.receive({type:"photocraft:state",state:{...engine.state(),documentView:{width:2,height:2,x:1,y:1,zoom:1}}});
+  });
+  expect(host.querySelector(".photocraft-overlay__pending")).toBeNull();expect(host.querySelector(".photocraft-overlay__loading")).toBeNull();
+  expect(host.querySelector<HTMLDivElement>(".photocraft-overlay__frame")!.style.visibility).toBe("visible");
+  expect(setImageFocus).toHaveBeenCalledWith(expect.objectContaining({nodeId:"n",presentationReady:true}));
+  expect(setImageFocusTexture.mock.calls.every(([value])=>value===null)).toBe(true);
+  await act(async()=>{session.hide();});surface.remove();
 });

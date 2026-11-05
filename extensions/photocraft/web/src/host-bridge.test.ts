@@ -33,6 +33,23 @@ beforeEach(async () => {
   runtime.show();
 });
 afterEach(() => { runtime?.dispose(); canvas.parentElement?.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it("accounts for unchanged pixels as readback work while excluding a second handoff", async () => {
+  runtime.dispose();
+  const samples: any[] = [];
+  vi.stubGlobal("__woohaaPerformance", (sample: unknown) => samples.push(sample));
+  runtime = await createRuntime({ canvas, assetBaseUrl: `${location.origin}/prefix/extensions/pc/`, onEvent: emit }, async () => wasm);
+  runtime.show();
+  await paint();
+  runtime.ack(frames()[0].id, true);
+  await paint();
+  const captures = samples.filter(s => s.stage === "capture");
+  expect(captures).toHaveLength(2);
+  expect(captures[0]).toMatchObject({ width: 2, height: 2, sourceWidth: 2, sourceHeight: 2, bytes: 16, discarded: 0 });
+  expect(captures[1]).toMatchObject({ bytes: 16, discarded: 1, stale: 0 });
+  expect(samples.filter(s => s.stage === "readback")).toHaveLength(2);
+  expect(samples.filter(s => s.stage === "handoff")).toHaveLength(1);
+  expect(new Set(samples.map(s => s.stage))).toEqual(new Set(["tick", "state", "serialize", "bitmap", "prepare", "draw", "readback", "compare", "copy", "handoff", "capture"]));
+});
 it("uses explicit canvas and prefixed assets without changing location or creating an iframe", () => {
   expect(wasm.runtime_create).toHaveBeenCalledWith(canvas, `${location.origin}/prefix/extensions/pc/`);
   expect(location.search).toBe(""); expect(document.querySelector("iframe")).toBeNull();

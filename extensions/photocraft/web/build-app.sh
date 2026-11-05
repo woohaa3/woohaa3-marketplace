@@ -97,6 +97,7 @@ cp "src/app-assets/host-bridge.js" "$OUT/host-bridge.js"
 cp "src/app-assets/host-bridge-core.js" "$OUT/host-bridge-core.js"
 cp "src/app-assets/index.html" "$OUT/index.html"
 cp "src/app-assets/frame-channel.js" "$OUT/frame-channel.js"
+cp "src/app-assets/capture-metrics.js" "$OUT/capture-metrics.js"
 cp "$PHOTOCRAFT_SRC/LICENSE-MIT" "$OUT/LICENSE-MIT"
 cp "$PHOTOCRAFT_SRC/LICENSE-APACHE" "$OUT/LICENSE-APACHE"
 copy_font_assets

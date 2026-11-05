@@ -190,7 +190,7 @@ index 0000000..b42eaa5
 +#[wasm_bindgen]
 +pub fn runtime_documents() -> Result<String, JsValue> { with_app(|app| Ok(photocraft_ui_egui::overlay_workspace::list(app))) }
 diff --git a/apps/photocraft-web/src/web.rs b/apps/photocraft-web/src/web.rs
-index 87e6eaf..db322a9 100644
+index 87e6eaf..128125b 100644
 --- a/apps/photocraft-web/src/web.rs
 +++ b/apps/photocraft-web/src/web.rs
 @@ -25,7 +25,7 @@ const OPEN_EXTS: &[&str] = &[
@@ -412,6 +412,367 @@ index 87e6eaf..db322a9 100644
          // Only while a preset change is unsaved. Storage the browser denies from the start (a
          // sandboxed iframe, blocked site data) loses nothing until the first change, and that
          // change brings the banner with the reason.
+diff --git a/crates/algo/src/inpaint.rs b/crates/algo/src/inpaint.rs
+index 2dd4019..f1f8044 100644
+--- a/crates/algo/src/inpaint.rs
++++ b/crates/algo/src/inpaint.rs
+@@ -1820,24 +1820,31 @@ fn complete_cow<'a>(
+ /// ring of `ring` pixels around the hole, with the displaced hole fully inside the grid and outside the
+ /// hole. `None` if no displacement fits.
+ pub fn best_offset(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], ring: usize, max_radius: i32) -> Option<(i32, i32)> {
+-    let (bx0, by0, bx1, by1) = hole_bbox(w, h, hole)?;
++    best_offset_with(w,h,ch,img,hole,ring,max_radius,&photocraft_raster::Interrupt::NONE).unwrap_or(None)
++}
++
++/// Interruptible proximity search; cancellation is never reported as no matching source.
++pub fn best_offset_with(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], ring: usize, max_radius: i32, ctl: &photocraft_raster::Interrupt) -> Result<Option<(i32,i32)>,photocraft_raster::Cancelled> {
++    ctl.check()?;
++    let Some((bx0, by0, bx1, by1)) = hole_bbox(w,h,hole) else { return Ok(None); };
+     // No valid translation can move farther than the source image's extent.
+     // Bound arbitrary public API inputs before constructing i32 search ranges:
+     // usize -> i32 truncation and signed increments otherwise overflow or hang.
+     let extent = w.max(h).min((i32::MAX / 4) as usize) as i32;
+     let max_radius = max_radius.max(0).min(extent);
+     if max_radius == 0 {
+-        return None;
++        return Ok(None);
+     }
+     let ring = ring.max(1).min(extent as usize) as i32;
+     // Every set cell lies in the hole bounds. Counts outside that rectangle are zero,
+     // so source rejection needs a table for the hole, not for the whole photo.
+-    let hs = HoleIntegral::new(w, hole, (bx0, by0, bx1, by1))?;
++    let Some(hs) = HoleIntegral::new(w, hole, (bx0,by0,bx1,by1)) else { return Ok(None); };
+     // Sample points: the hole's ring (dilated minus hole), subsampled for speed.
+     let mut pts = Vec::new();
+     let (x0, y0) = (bx0 as i32 - ring, by0 as i32 - ring);
+     let (x1, y1) = (bx1 as i32 + ring, by1 as i32 + ring);
+     for y in y0.max(0)..y1.min(h as i32) {
++        ctl.check()?;
+         for x in x0.max(0)..x1.min(w as i32) {
+             if hole[y as usize * w + x as usize] {
+                 continue;
+@@ -1886,8 +1893,10 @@ pub fn best_offset(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], ri
+     };
+     let mut dy = -max_radius;
+     while dy <= max_radius {
++        ctl.check()?;
+         let mut dx = -max_radius;
+         while dx <= max_radius {
++            ctl.check()?;
+             consider(dx, dy, &mut best);
+             dx += step;
+         }
+@@ -1897,24 +1906,33 @@ pub fn best_offset(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], ri
+         && let Some(((bx, by), _)) = best
+     {
+         for dy in (by - step)..=(by + step) {
++            ctl.check()?;
+             for dx in (bx - step)..=(bx + step) {
+                 consider(dx, dy, &mut best);
+             }
+         }
+     }
+-    best.map(|b| b.0)
++    ctl.check()?;
++    Ok(best.map(|b| b.0))
+ }
+ 
+ /// Create texture: fill the hole with blocks of surrounding texture (see module docs).
+ pub fn synthesize(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], block: usize, seed: u64) -> Vec<f32> {
++    synthesize_with(w,h,ch,img,hole,block,seed,&photocraft_raster::Interrupt::NONE).unwrap_or_else(|_| img.to_vec())
++}
++
++/// Interruptible texture synthesis; normal completion keeps the original deterministic algorithm.
++pub fn synthesize_with(w: usize,h: usize,ch: usize,img: &[f32],hole: &[bool],block: usize,seed: u64,ctl: &photocraft_raster::Interrupt) -> Result<Vec<f32>,photocraft_raster::Cancelled> {
++    ctl.check()?;
+     let mut out = img.to_vec();
+-    let Some((bx0, by0, bx1, by1)) = hole_bbox(w, h, hole) else { return out };
++    let Some((bx0, by0, bx1, by1)) = hole_bbox(w, h, hole) else { return Ok(out) };
+     let b = block.max(4) as i32;
+     let ov = (b / 3).max(1);
+     let hs = integral(w, h, hole);
+     // Candidate block origins: whole block (with overlap) inside the grid and outside the hole.
+     let mut cands = Vec::new();
+     for y in ov..(h as i32 - b - ov) {
++        ctl.check()?;
+         for x in ov..(w as i32 - b - ov) {
+             if window_count(&hs, w, h, x - ov, y - ov, x + b + ov, y + b + ov) == 0 {
+                 cands.push((x, y));
+@@ -1922,18 +1940,21 @@ pub fn synthesize(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], blo
+         }
+     }
+     if cands.is_empty() {
+-        return membrane_fill(w, h, ch, img, hole);
++        return crate::poisson::membrane_fill_with(w,h,ch,img,hole,ctl);
+     }
+     let mut filled: Vec<bool> = hole.iter().map(|x| !x).collect();
+     let mut rng = Rng::new(seed);
+     let mut by = by0 as i32;
+     while by < by1 as i32 {
++        ctl.check()?;
+         let mut bx = bx0 as i32;
+         while bx < bx1 as i32 {
++            ctl.check()?;
+             if window_count(&hs, w, h, bx, by, bx + b, by + b) > 0 {
+                 // Pick the candidate whose block best agrees with already-known pixels around/inside.
+                 let mut best = (cands[0], f32::INFINITY);
+                 for _ in 0..48 {
++                    ctl.check()?;
+                     let c = cands[(rng.next() % cands.len() as u64) as usize];
+                     let (mut e, mut n) = (0.0f32, 0u32);
+                     for y in (by - ov)..(by + b + ov) {
+@@ -1992,7 +2013,8 @@ pub fn synthesize(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], blo
+         }
+         by += b;
+     }
+-    out
++    ctl.check()?;
++    Ok(out)
+ }
+ 
+ /// The minimum-error cut through a band `across` wide and `along` long (Efros & Freeman's
+@@ -2490,3 +2512,26 @@ mod tests {
+         assert!(out.iter().all(|v| v.is_finite()));
+     }
+ }
++
++#[cfg(test)]
++mod native_healing_interrupt_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    #[test]
++    fn proximity_and_texture_cancel_inside_search_without_changing_quality() {
++        let (w,h,ch)=(80,72,3);
++        let img:Vec<f32>=(0..w*h*ch).map(|n| ((n*17%251) as f32)/251.0).collect();
++        let hole:Vec<bool>=(0..w*h).map(|i| (30..44).contains(&(i%w)) && (26..40).contains(&(i/w))).collect();
++        let none=photocraft_raster::Interrupt::NONE;
++        assert_eq!(best_offset(w,h,ch,&img,&hole,3,24),best_offset_with(w,h,ch,&img,&hole,3,24,&none).unwrap());
++        assert_eq!(synthesize(w,h,ch,&img,&hole,6,11),synthesize_with(w,h,ch,&img,&hole,6,11,&none).unwrap());
++        for texture in [false,true] {
++            let checks=AtomicUsize::new(0);
++            let cancel=|| checks.fetch_add(1,Ordering::Relaxed)>=5;
++            let ctl=photocraft_raster::Interrupt::cancel_only(&cancel);
++            if texture { assert!(synthesize_with(w,h,ch,&img,&hole,6,11,&ctl).is_err()); }
++            else { assert!(best_offset_with(w,h,ch,&img,&hole,3,24,&ctl).is_err()); }
++            assert!(checks.load(Ordering::Relaxed)>5);
++        }
++    }
++}
+diff --git a/crates/algo/src/poisson.rs b/crates/algo/src/poisson.rs
+index 1986f6b..ca1c031 100644
+--- a/crates/algo/src/poisson.rs
++++ b/crates/algo/src/poisson.rs
+@@ -216,14 +216,22 @@ fn per_channel(w: usize, h: usize, ch: usize, f: impl Fn(usize) -> Vec<f32> + Sy
+ /// grid edge that are in the mask see a Neumann (free) boundary there, so callers should leave a one
+ /// pixel unmasked margin for a fully Dirichlet problem.
+ pub fn seamless_clone(w: usize, h: usize, ch: usize, src: &[f32], dst: &[f32], mask: &[bool]) -> Vec<f32> {
++    seamless_clone_with(w,h,ch,src,dst,mask,&photocraft_raster::Interrupt::NONE).unwrap_or_else(|_| dst.to_vec())
++}
++
++/// Interruptible seamless clone; rejects partial solves after cancellation.
++pub fn seamless_clone_with(w:usize,h:usize,ch:usize,src:&[f32],dst:&[f32],mask:&[bool],ctl:&photocraft_raster::Interrupt) -> Result<Vec<f32>,photocraft_raster::Cancelled> {
++    ctl.check()?;
+     assert_eq!(src.len(), w * h * ch);
+     assert_eq!(dst.len(), w * h * ch);
+     assert_eq!(mask.len(), w * h);
+-    per_channel(w, h, ch, |c| {
++    let out = per_channel(w, h, ch, |c| {
+         let mut hv: Vec<f32> = (0..w * h).map(|i| if mask[i] { 0.0 } else { dst[i * ch + c] - src[i * ch + c] }).collect();
+-        solve_membrane(w, h, mask, &mut hv);
++        solve_rec(w,h,mask,&mut hv,0,&|| ctl.cancelled());
+         (0..w * h).map(|i| if mask[i] { src[i * ch + c] + hv[i] } else { dst[i * ch + c] }).collect()
+-    })
++    });
++    ctl.check()?;
++    Ok(out)
+ }
+ 
+ /// Membrane fill (no source texture): harmonic interpolation of the known pixels into `hole`.
+@@ -326,3 +334,21 @@ mod tests {
+         assert_eq!(&out[..3], &dst[..3]);
+     }
+ }
++
++#[cfg(test)]
++mod native_healing_interrupt_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize,Ordering};
++    #[test]
++    fn final_seamless_solve_cancels_and_non_cancelled_pixels_match() {
++        let (w,h,ch)=(96,80,3);
++        let src:Vec<f32>=(0..w*h*ch).map(|i| (i%41) as f32/41.0).collect();
++        let dst=vec![0.3;w*h*ch];
++        let mask:Vec<bool>=(0..w*h).map(|i| (8..w-8).contains(&(i%w)) && (8..h-8).contains(&(i/w))).collect();
++        assert_eq!(seamless_clone(w,h,ch,&src,&dst,&mask),seamless_clone_with(w,h,ch,&src,&dst,&mask,&photocraft_raster::Interrupt::NONE).unwrap());
++        let checks=AtomicUsize::new(0);
++        let cancel=|| checks.fetch_add(1,Ordering::Relaxed)>=5;
++        assert!(seamless_clone_with(w,h,ch,&src,&dst,&mask,&photocraft_raster::Interrupt::cancel_only(&cancel)).is_err());
++        assert!(checks.load(Ordering::Relaxed)>5);
++    }
++}
+diff --git a/crates/engine/src/retouch_cmds.rs b/crates/engine/src/retouch_cmds.rs
+index 0053773..bed33e6 100644
+--- a/crates/engine/src/retouch_cmds.rs
++++ b/crates/engine/src/retouch_cmds.rs
+@@ -645,6 +645,12 @@ fn pad_coverage(bounds: Rect, cov: &[f32], m: i32) -> (Rect, Vec<f32>) {
+ /// Seamless-clone `src` into `dst` over the mask (both regions cover the same rect). The solve runs
+ /// only on the mask's bounding box plus a one-pixel Dirichlet ring; the rest is `dst`.
+ fn heal_region(fmt: &PixelFormat, src: &Region, dst: &Region, mask: &[bool]) -> Region {
++    // Synchronous callers retain the existing non-interruptible contract.
++    heal_region_with(fmt,src,dst,mask,&photocraft_raster::Interrupt::NONE).unwrap_or_else(|_| dst.clone())
++}
++
++fn heal_region_with(fmt:&PixelFormat,src:&Region,dst:&Region,mask:&[bool],ctl:&photocraft_raster::Interrupt) -> Result<Region> {
++    ctl.check().map_err(|_| EngineError::Cancelled)?;
+     let w = dst.width();
+     let bbox = mask.iter().enumerate().filter(|(_, m)| **m).fold(Rect::EMPTY, |r, (i, _)| {
+         let (x, y) = (dst.rect.x0 + (i % w) as i32, dst.rect.y0 + (i / w) as i32);
+@@ -652,20 +658,21 @@ fn heal_region(fmt: &PixelFormat, src: &Region, dst: &Region, mask: &[bool]) ->
+     });
+     let mut out = dst.clone();
+     if bbox.is_empty() {
+-        return out;
++        return Ok(out);
+     }
+     let r = bbox.inflate(1).intersect(&dst.rect);
+     let (s, d) = (src.crop(r), dst.crop(r));
+     let m: Vec<bool> = (r.y0..r.y1).flat_map(|y| (r.x0..r.x1).map(move |x| (x, y))).map(|(x, y)| mask[dst.index(x, y)]).collect();
+-    let mut data = poisson::seamless_clone(d.width(), d.height(), d.ch, &s.data, &d.data, &m);
++    let mut data = poisson::seamless_clone_with(d.width(), d.height(), d.ch, &s.data, &d.data, &m,ctl).map_err(|_| EngineError::Cancelled)?;
+     clamp_samples(fmt, &mut data);
+     let (n, rw) = (dst.ch, r.width() as usize);
+     for y in r.y0..r.y1 {
++        ctl.check().map_err(|_| EngineError::Cancelled)?;
+         let o = out.index(r.x0, y) * n;
+         let i = (y - r.y0) as usize * rw * n;
+         out.data[o..o + rw * n].copy_from_slice(&data[i..i + rw * n]);
+     }
+-    out
++    Ok(out)
+ }
+ 
+ fn healing_brush(s: &mut Session, p: &Value) -> Result<Value> {
+@@ -798,7 +805,8 @@ enum SpotType {
+ /// Photoshop 25.4 (measured): a dab changes exactly the brush's footprint, and Content-Aware takes
+ /// its texture from around it, as Edit › Fill does from its window
+ /// ([`crate::fill_cmds::sampling_window`] of the stroke's bounds), which is what this samples.
+-fn spot_heal_surface(surf: &mut Surface, pre: &Document, stroke: &Stroke, kind: SpotType, all: bool, sel: Option<&Surface>, lock: bool) -> Result<Rect> {
++fn spot_heal_surface(surf: &mut Surface, pre: &Document, stroke: &Stroke, kind: SpotType, all: bool, sel: Option<&Surface>, lock: bool, ctx: &crate::jobs::JobCtx) -> Result<Rect> {
++    ctx.check()?;
+     let (bounds, cov) = coverage("paint.spotHealing", stroke)?;
+     let size = stroke.brush.size;
+     let region_rect = crate::fill_cmds::sampling_window(bounds, pre.bounds());
+@@ -827,21 +835,30 @@ fn spot_heal_surface(surf: &mut Surface, pre: &Document, stroke: &Stroke, kind:
+     // membrane corrects (otherwise the Dirichlet data would be all zero and the blend a no-op).
+     let domain = dilate(w, h, &hole, 2);
+     let heal_mask = dilate(w, h, &hole, 1);
+-    let content_aware =
+-        |img: &[f32]| inpaint::complete(w, h, ch, img, &domain, &CompleteParams::default()).unwrap_or_else(|| poisson::membrane_fill(w, h, ch, img, &domain));
++    let content_aware = |img: &[f32]| -> Result<Vec<f32>> {
++        ctx.stage(0.05, 0.85, "Completing texture", |ctl| {
++            let filled = inpaint::complete_with(w, h, ch, img, &domain, &CompleteParams::default(), ctl).map_err(|_| EngineError::Cancelled)?;
++            match filled {
++                Some(pixels) => Ok(pixels),
++                None => poisson::membrane_fill_with(w, h, ch, img, &domain, ctl).map_err(|_| EngineError::Cancelled),
++            }
++        })
++    };
+     let filled = match kind {
+-        SpotType::ContentAware => content_aware(&img.data),
+-        SpotType::CreateTexture => inpaint::synthesize(w, h, ch, &img.data, &domain, (size / 4.0).clamp(6.0, 32.0) as usize, 0x5eed),
++        SpotType::ContentAware => content_aware(&img.data)?,
++        SpotType::CreateTexture => ctx.stage(0.05,0.85,"Synthesizing texture", |ctl| inpaint::synthesize_with(w,h,ch,&img.data,&domain,(size / 4.0).clamp(6.0,32.0) as usize,0x5eed,ctl)).map_err(|_| EngineError::Cancelled)?,
+         SpotType::ProximityMatch => {
+             let ring = (size / 8.0).clamp(3.0, 16.0) as usize;
+-            match inpaint::best_offset(w, h, ch, &img.data, &domain, ring, margin) {
+-                Some((dx, dy)) => proximity_source_patch(&img.data, w, h, ch, &domain, dx, dy).unwrap_or_else(|| content_aware(&img.data)),
+-                None => content_aware(&img.data),
++            match ctx.stage(0.05,0.65,"Matching source",|ctl| inpaint::best_offset_with(w,h,ch,&img.data,&domain,ring,margin,ctl)).map_err(|_| EngineError::Cancelled)? {
++                Some((dx, dy)) => match proximity_source_patch(&img.data, w, h, ch, &domain, dx, dy) { Some(pixels) => pixels, None => content_aware(&img.data)? },
++                None => content_aware(&img.data)?,
+             }
+         }
+     };
++    ctx.check()?;
+     let src = Region { rect: region_rect, ch, data: filled };
+-    let healed = heal_region(&fmt, &src, &img, &heal_mask);
++    let healed = ctx.stage(0.85,0.98,"Blending texture", |ctl| heal_region_with(&fmt,&src,&img,&heal_mask,ctl))?;
++    ctx.check()?;
+     let dmg = bounds.intersect(&region_rect);
+     let dmg_cov: Vec<f32> = (dmg.y0..dmg.y1).flat_map(|y| (dmg.x0..dmg.x1).map(move |x| (x, y))).map(|(x, y)| stroke_cov[img.index(x, y)]).collect();
+     Ok(apply_coverage(surf, dmg, &dmg_cov, stroke.brush.opacity, sel, lock, &healed, BlendMode::Normal))
+@@ -858,8 +875,33 @@ fn spot_healing(s: &mut Session, p: &Value) -> Result<Value> {
+         o => return Err(bad(CMD, format!("unknown type `{o}` (contentAware|createTexture|proximityMatch)"))),
+     };
+     let all = sample_all_layers(p);
+-    let dmg = run_stroke(s, "Spot Healing Brush", id, p, |pre, surf, sel, lock| spot_heal_surface(surf, pre, &stroke, kind, all, sel, lock))?;
+-    Ok(json!({ "damage": damage_json(dmg) }))
++    // Snapshot/work/apply keeps the engine Session as the sole mutable owner. The exact
++    // same target/selection/transparency path runs inline for CLI/WASM and on a worker
++    // for native Session::start; commit remains one atomic undo step.
++    let st = s.active().ok_or(EngineError::NoDocument)?;
++    let base = st.doc.clone();
++    let params = p.clone();
++    crate::jobs::run(
++        s,
++        "Spot Healing Brush",
++        true,
++        move |ctx| {
++            ctx.check()?;
++            ctx.progress(0.0, "Healing");
++            let mut doc = (*base).clone();
++            let pre = doc.clone();
++            let (surf, lock) = crate::channel_cmds::target_surface(&mut doc, id, &params)?;
++            let damage = spot_heal_surface(surf, &pre, &stroke, kind, all, pre.selection.as_ref(), lock, ctx)?;
++            ctx.check()?;
++            ctx.progress(1.0, "Ready");
++            Ok((doc, damage))
++        },
++        move |s, (doc, damage)| {
++            s.edit("Spot Healing Brush", move |current, _| { *current = doc; Ok(()) })?;
++            if let Some(st) = s.active_mut() { st.last_damage = Some(damage); }
++            Ok(json!({ "damage": damage_json(damage) }))
++        },
++    )
+ }
+ 
+ // ---------------------------------------------------------------------------------------------
+diff --git a/crates/engine/src/retouch_cmds/tests.rs b/crates/engine/src/retouch_cmds/tests.rs
+index 7f60b72..1d937a9 100644
+--- a/crates/engine/src/retouch_cmds/tests.rs
++++ b/crates/engine/src/retouch_cmds/tests.rs
+@@ -2291,3 +2291,31 @@ fn periodic_clone_interior_matches_ordinary_brush_masks_and_transparency() {
+         }
+     }
+ }
++
++#[test]
++fn native_spot_healing_job_matches_inline_and_cancel_never_commits() {
++    use crate::jobs::Started;
++    for depth in DEPTHS {
++        let mut s = session(32, 32, depth, "rgb");
++        paint_layer(&mut s, |x,y| if x == 16 && y == 16 { [0.0,0.0,0.0,1.0] } else { texture(x,y) });
++        let before = s.active().unwrap().doc.clone();
++        let params = json!({"points": [[16,16]], "size": 6, "hardness": 100});
++        let Started::Job(job) = s.start("paint.spotHealing", params.clone()).unwrap() else { panic!("native healing must be asynchronous") };
++        assert_eq!(*s.active().unwrap().doc, *before, "worker cannot edit owner pixels");
++        assert!(s.start("paint.spotHealing", params.clone()).is_err(), "document lock rejects conflicting edits");
++        s.cancel_job(job);
++        assert!(s.wait_job(job).is_err());
++        assert_eq!(*s.active().unwrap().doc, *before, "cancelled result cannot commit");
++        let Started::Job(job) = s.start("paint.spotHealing", params.clone()).unwrap() else { panic!() };
++        s.wait_job(job).unwrap();
++        let healed = s.active().unwrap().doc.clone();
++        assert!(s.undo());
++        assert_eq!(*s.active().unwrap().doc, *before, "one undo restores exact pre-job document");
++        assert!(s.redo());
++        assert_eq!(*s.active().unwrap().doc, *healed);
++        s.undo();
++        s.execute("paint.spotHealing", params).unwrap();
++        assert_eq!(*s.active().unwrap().doc, *healed, "job uses the same pixel path as inline");
++        assert!(!s.has_jobs());
++    }
++}
 diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
 index d2543a5..74e08af 100644
 --- a/crates/ui-egui/src/canvas.rs
@@ -580,6 +941,134 @@ index f6f654a..ea5868d 100644
      let (target, docs) = discarded(app, id, params);
      if docs.is_empty() {
          return false;
+diff --git a/crates/ui-egui/src/gpu_canvas.rs b/crates/ui-egui/src/gpu_canvas.rs
+index a9d7f5a..189af7a 100644
+--- a/crates/ui-egui/src/gpu_canvas.rs
++++ b/crates/ui-egui/src/gpu_canvas.rs
+@@ -190,6 +190,13 @@ impl GpuCanvas {
+         self.health.fault()
+     }
+ 
++    /// Keep GPU display textures while sending immutable document composites to native workers.
++    pub fn force_cpu_compositor(&self,reason:&str) {
++        if let Some(resources)=self.rs.renderer.write().callback_resources.get_mut::<Resources>() {
++            resources.compositor=None;
++            resources.compositor_failed=Some(photocraft_gpu::Unsupported(reason.to_owned()));
++        }
++    }
+     /// Free every GPU resource the canvas holds (compositor pages, document textures, LUTs) after
+     /// a fault; the paint callback draws nothing from then on.
+     pub fn release(&self) {
+@@ -250,12 +257,21 @@ impl GpuCanvas {
+         Some((d.format, bytes))
+     }
+ 
++    /// A host-wide hard ceiling, shared by all cached documents; no document is evicted.
++    pub fn set_host_memory_cap(&self,bytes:u64) {
++        if let Some(res)=self.rs.renderer.write().callback_resources.get_mut::<Resources>() {
++            res.host_budget_cap=Some(bytes);res.canvas_budget.store(bytes/2,Ordering::Relaxed);
++            res.compositor_budget=Some(res.compositor_budget.unwrap_or(bytes/4).min(bytes/4));
++            res.compositor_cache_budget=Some(res.compositor_cache_budget.unwrap_or(bytes/4).min(bytes/4));
++            if let Some(comp)=&mut res.compositor {comp.set_memory_budget(bytes/4);comp.set_composite_cache_budget(bytes/4);}
++        }
++    }
+     /// Set the GPU memory the wgpu compositor may hold for layer pages and caches (see
+     /// [`memory_budget`]); pages beyond it are evicted least recently used first.
+     pub fn set_memory_budget(&self, bytes: u64) {
+         let mut r = self.rs.renderer.write();
+         if let Some(res) = r.callback_resources.get_mut::<Resources>() {
+-            res.compositor_budget = Some(bytes);
++            res.compositor_budget = Some(bytes.min(res.host_budget_cap.map_or(u64::MAX,|cap|cap/4)));
+         }
+     }
+ 
+@@ -267,7 +283,8 @@ impl GpuCanvas {
+ 
+     /// Set the GPU bytes one document's display texture set may take (see [`canvas_budget`]).
+     pub fn set_canvas_budget(&self, bytes: u64) {
+-        self.canvas_budget.store(bytes, Ordering::Relaxed);
++        let cap=self.rs.renderer.read().callback_resources.get::<Resources>().and_then(|res|res.host_budget_cap).map_or(u64::MAX,|cap|cap/2);
++        self.canvas_budget.store(bytes.min(cap), Ordering::Relaxed);
+     }
+ 
+     /// Whether `doc`'s display textures fit [`canvas_budget`]; when they don't, nothing is
+@@ -276,13 +293,17 @@ impl GpuCanvas {
+         let size = [doc.size.width, doc.size.height];
+         let bytes = canvas_texture_bytes(size, self.tile, texel_bytes(self.format_for(doc.depth, size)));
+         let r = self.rs.renderer.read();
+-        r.callback_resources.get::<Resources>().is_some_and(|res| bytes <= res.canvas_budget.load(Ordering::Relaxed))
++        r.callback_resources.get::<Resources>().is_some_and(|res| {
++            let others=if res.host_budget_cap.is_some() {res.docs.iter().filter(|(key,_)|**key!=doc.id.0).map(|(_,d)|canvas_texture_bytes(d.size,self.tile,texel_bytes(d.format))).sum::<u64>()}else{0};
++            bytes.saturating_add(others)<=res.canvas_budget.load(Ordering::Relaxed)
++        })
+     }
+ 
+     /// Cap lower-stack composite reuse; zero disables it for profiling the uncached path.
+     pub fn set_composite_cache_budget(&self, bytes: u64) {
+         let mut r = self.rs.renderer.write();
+         if let Some(res) = r.callback_resources.get_mut::<Resources>() {
++            let bytes=bytes.min(res.host_budget_cap.map_or(u64::MAX,|cap|cap/4));
+             res.compositor_cache_budget = Some(bytes);
+             if let Some(comp) = &mut res.compositor {
+                 comp.set_composite_cache_budget(bytes);
+@@ -660,7 +681,8 @@ impl GpuCanvas {
+             Err(e) => out.fallback = Some(e.0),
+         }
+         let px = region.width() as u64 * region.height() as u64;
+-        if defer && px >= DEFER_PX && self.prepare_texture(key, doc).is_some() {
++        let hosted_cpu=self.rs.renderer.read().callback_resources.get::<Resources>().is_some_and(|r|r.compositor_failed.is_some()) && crate::overlay::hosted();
++        if defer && (px >= DEFER_PX || hosted_cpu) && self.prepare_texture(key, doc).is_some() {
+             out.kind = REFRESH_DEFERRED;
+             out.px = px;
+             return out;
+@@ -1593,6 +1615,7 @@ struct Resources {
+     /// GPU memory the compositor may hold (`None`: its default), and the document area the
+     /// view shows; applied before every composite.
+     compositor_budget: Option<u64>,
++    host_budget_cap:Option<u64>,
+     /// The layer pages the last full (or large) refresh needed and the budget they had to fit
+     /// (bytes): when they don't fit, full refreshes go to the CPU ([`OVER_BUDGET`]).
+     layer_fit: Option<LayerFit>,
+@@ -1922,6 +1945,7 @@ impl Resources {
+             compositor_failed: None,
+             health: photocraft_gpu::DeviceHealth::new(),
+             compositor_budget: None,
++            host_budget_cap:None,
+             layer_fit: None,
+             compositor_cache_budget: None,
+             compositor_focus: None,
+@@ -1981,7 +2005,8 @@ impl DocTextures {
+     /// on the CPU canvas instead of the out-of-memory error disabling the GPU for the session.
+     fn new(device: &wgpu::Device, res: &Resources, size: [u32; 2], tile: u32, format: wgpu::TextureFormat) -> Option<Self> {
+         let bytes = canvas_texture_bytes(size, tile, texel_bytes(format));
+-        if bytes > res.canvas_budget.load(Ordering::Relaxed) {
++        let existing=if res.host_budget_cap.is_some(){res.docs.values().map(|d|canvas_texture_bytes(d.size,tile,texel_bytes(d.format))).sum::<u64>()}else{0};
++        if bytes.saturating_add(existing) > res.canvas_budget.load(Ordering::Relaxed) {
+             return None;
+         }
+         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+@@ -2216,7 +2241,7 @@ impl CanvasCallback {
+         // pixel_grid.rs). `p.zoom` is screen points per document pixel; the shared threshold is
+         // in device pixels, so scale by the display's pixels per point.
+         let grid = if p.pixel_grid && crate::pixel_grid::shows_at(p.zoom * ppp) { crate::pixel_grid::STRENGTH } else { 0.0 };
+-        let square = if style.checker_square > 0.0 { (style.checker_square * ppp).round().max(1.0) } else { 0.0 };
++        let square = if crate::overlay::capture_clean() { -1.0 } else if style.checker_square > 0.0 { (style.checker_square * ppp).round().max(1.0) } else { 0.0 };
+         let (l, d, g) = (style.checker_light, style.checker_dark, style.gamut_color);
+         // 32-bit preview: linear-light gain 2^exposure (0 = off) and 1 / gamma.
+         let (gain, inv_gamma) = match p.hdr {
+@@ -2552,6 +2577,12 @@ fn fs_tile(in: VOut) -> @location(0) vec4<f32> {
+         }
+         col = vec4(shown * col.a, col.a);
+     }
++    // Hosted document texture: preserve premultiplied alpha and leave checker/grid/chrome
++    // to the separate UI layer. The standard eframe canvas keeps its original appearance.
++    if (view.c.w < 0.0) {
++        if (view.d.w > 0.5 && col.a > 0.0) { return vec4(srgb_to_linear(col.rgb / col.a) * col.a, col.a); }
++        return col;
++    }
+     var rgb = col.rgb + checker(d) * (1.0 - col.a);
+     // The pixel grid is drawn over pixels with content, not over empty checker.
+     let grid = view.c.z * col.a;
 diff --git a/crates/ui-egui/src/i18n/mod.rs b/crates/ui-egui/src/i18n/mod.rs
 index 0ff8a30..27b0268 100644
 --- a/crates/ui-egui/src/i18n/mod.rs
@@ -736,8 +1225,45 @@ index 25cc9fe..cf14957 100644
      #[test]
      fn system_preferences_are_negotiated_in_order() {
          for (tags, expected) in [
+diff --git a/crates/ui-egui/src/jobs_ui.rs b/crates/ui-egui/src/jobs_ui.rs
+index 259eca7..65c0653 100644
+--- a/crates/ui-egui/src/jobs_ui.rs
++++ b/crates/ui-egui/src/jobs_ui.rs
+@@ -365,7 +365,14 @@ fn close_after_saves(app: &mut PhotocraftApp, ctx: &egui::Context) {
+ /// Per frame: apply finished jobs and react to them; keep frames coming while jobs run; Esc
+ /// cancels the job in view.
+ pub fn tick(app: &mut PhotocraftApp, ctx: &egui::Context) {
+-    for e in app.session.poll_jobs() {
++    let _ = tick_events(app, ctx);
++}
++
++/// Same UI bookkeeping, returning completed jobs to an external host receipt owner.
++/// The host consumes these exactly once; it must not independently poll the same jobs.
++pub fn tick_events(app: &mut PhotocraftApp, ctx: &egui::Context) -> Vec<JobEvent> {
++    let events = app.session.poll_jobs();
++    for e in events.iter().cloned() {
+         on_event(app, ctx, e);
+     }
+     // A focused open tab that ended (or was cancelled elsewhere) gives way to the documents.
+@@ -378,7 +385,7 @@ pub fn tick(app: &mut PhotocraftApp, ctx: &egui::Context) {
+         ctx.request_repaint_after(std::time::Duration::from_millis(50));
+     }
+     if !keep_polling(app, ctx) {
+-        return;
++        return events;
+     }
+     if let Some(job) = job_in_view(app)
+         && !ctx.text_edit_focused()
+@@ -386,6 +393,7 @@ pub fn tick(app: &mut PhotocraftApp, ctx: &egui::Context) {
+     {
+         cancel(app, job.id);
+     }
++    events
+ }
+ 
+ /// Keep the event loop awake while a background document job exists.
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 6ea5992..6de95e0 100644
+index 6ea5992..8185d74 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -258,6 +258,10 @@ pub mod zoom_levels;
@@ -781,15 +1307,131 @@ index 6ea5992..6de95e0 100644
      fn on_exit(&mut self) {
          if let Err(err) = tool_memory::save_on_exit(self) {
              log::warn!("Preferences: could not save the final tool selection: {err}");
-@@ -2243,6 +2256,7 @@ impl eframe::App for PhotocraftApp {
+@@ -2242,7 +2255,71 @@ impl eframe::App for PhotocraftApp {
+     }
  
      fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
++        self.host_logic_with_frame(ctx, Some(frame));
++    }
++    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
++        self.host_raw_input(ctx, raw_input);
++    }
++    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
++        let previous_cpu_usage = frame.info().cpu_usage;
++        self.host_ui_with_frame(ui, Some(frame), previous_cpu_usage);
++    }
++
++}
++
++impl PhotocraftApp {
++    /// Recover only document computation while retaining the same window GPU and Session owner.
++    pub fn host_force_cpu_viewport(&mut self,reason:&str)->bool {
++        let Some(gpu)=self.gpu.as_ref() else {return false;};
++        gpu.force_cpu_compositor(reason);self.redraws.clear();self.canvases.clear();
++        self.background_jobs=true;self.perf.gpu_fallback=Some(reason.to_owned());true
++    }
++    /// Reserve the host's remaining GPU budget before the next view allocates resources.
++    pub fn host_set_gpu_budget(&self,bytes:u64)->bool {
++        let Some(gpu)=self.gpu.as_ref() else {return false;};gpu.set_host_memory_cap(bytes);
++        self.session.active().is_none_or(|state|gpu.fits_canvas(&state.doc))
++    }
++    /// Retry computation on the still-live injected window device, retaining UI/history.
++    pub fn host_restore_gpu_viewport(&mut self,state:eframe::egui_wgpu::RenderState) {
++        self.redraws.clear();self.canvases.clear();self.proxy_uploaded=None;
++        self.perf.gpu_fallback=None;self.gpu_fault=None;self.set_wgpu(state);
++    }
++    /// Retire device references without serializing/replacing the document Session.
++    pub fn host_release_gpu(&mut self) {
++        if let Some(gpu)=self.gpu.take() {gpu.release();}
++        self.gpu_render_state=None;self.window_device=None;self.window_lost=false;
++        self.window_recovery_retry=None;self.canvases.clear();self.proxy_uploaded=None;
++        self.prefs_rt.gpu_style=None;self.perf.gpu=false;
++        // A recovered renderer starts a fresh egui context. Retire every old context texture
++        // handle and reinstall fonts/plugins, while preserving views, tools and Session history.
++        self.navigator_textures.clear();self.navigator_gpu.clear();self.navigator_plain.clear();
++        self.thumbs.clear();self.snapshot_thumbs.clear();self.channel_thumbs=None;self.checker=None;
++        self.styled=false;self.fonts_ready=false;
++    }
++    /// Cancel only transient input. Documents, history and queued engine jobs survive.
++    pub fn host_cancel_input(&mut self,ctx:&egui::Context) {
++        self.drag=None;self.live_stroke=None;self.trail=None;self.move_preview=None;
++        self.reorder_preview=None;self.patch_preview=None;self.cam_preview=None;
++        self.press_stroke=false;self.secondary_erase=false;self.held_erase=false;
++        self.brush_resize=None;self.brush_resize_armed=false;self.quick_pick=false;
++        self.tool_override=None;self.session.clear_live_stroke();
++        ctx.input_mut(|input| {input.keys_down.clear();input.modifiers=Default::default();input.pointer=Default::default();input.events.clear();});
++        ctx.memory_mut(|m| {if let Some(id)=m.focused() {m.surrender_focus(id);}});
++    }
++    /// Tick from an external egui host without constructing an eframe Frame.
++    /// Services owns native dialogs/OS actions; callbacks receive no eframe parent.
++    /// The caller invokes this once before host_ui and consumes egui platform output.
++    pub fn host_logic(&mut self, ctx: &egui::Context) -> Vec<photocraft_engine::jobs::JobEvent> {
++        self.host_logic_with_frame(ctx, None)
++    }
++    /// Draw the official UI with this app's single authoritative Session.
++    /// previous_cpu_usage is optional measured seconds, never an estimated zero.
++    pub fn host_ui(&mut self, ui: &mut egui::Ui, previous_cpu_usage: Option<f32>) {
++        self.host_ui_with_frame(ui, None, previous_cpu_usage);
++    }
++    fn host_logic_with_frame(&mut self, ctx: &egui::Context, frame: Option<&eframe::Frame>) -> Vec<photocraft_engine::jobs::JobEvent> {
          self.cap_frame_rate();
 +        overlay::tick(self, ctx);
          i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
          // Caps Lock state read from the OS once per frame (see `Services::caps_lock`): the canvas
          // cursor block needs it before the frame renders. `None` (Wayland/web) keeps `false`.
-@@ -2440,7 +2454,7 @@ impl eframe::App for PhotocraftApp {
+@@ -2284,7 +2361,7 @@ impl eframe::App for PhotocraftApp {
+         self.collect_screenshots(ctx);
+         self.issue_screenshots(ctx);
+         prefs_ui::tick(self, ctx);
+-        monitor_status::poll_frame(self, ctx, frame);
++        if let Some(frame) = frame { monitor_status::poll_frame(self, ctx, frame); } else { monitor_status::poll(self, ctx); }
+         // Control requests and persisted preferences can change the language in this frame.
+         i18n::sync_context(ctx, &self.session.prefs().interface.language);
+         type_tool::sync_font_names(ctx, self.session.prefs().type_.show_font_names_in_english);
+@@ -2294,8 +2371,9 @@ impl eframe::App for PhotocraftApp {
+         discard_ui::guard_window_close(self, ctx);
+         // Background jobs: apply finished ones, keep frames coming, Esc cancels (before the
+         // shortcuts see Esc).
++        let mut job_events = Vec::new();
+         if !screen_picker::tick(self, ctx) {
+-            jobs_ui::tick(self, ctx);
++            job_events = jobs_ui::tick_events(self, ctx);
+             #[cfg(not(target_arch = "wasm32"))]
+             filter_preview_worker::discard_closed(self);
+             shortcuts::handle(self, ctx);
+@@ -2332,10 +2410,11 @@ impl eframe::App for PhotocraftApp {
+         if !self.pending_screenshots.is_empty() {
+             ctx.request_repaint_after(std::time::Duration::from_millis(16));
+         }
+-        self.poll_file_dialog(ctx, Some(frame));
++        self.poll_file_dialog(ctx, frame);
++        job_events
+     }
+ 
+-    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
++    pub fn host_raw_input(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+         let frame_start = gpu_canvas::now_ms();
+         // An undecorated window gets its caption back when the toolkit changes its flags
+         // (maximize, restore, …): take it off again before the frame is laid out (#2246).
+@@ -2368,7 +2447,7 @@ impl eframe::App for PhotocraftApp {
+         }
+     }
+ 
+-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
++    fn host_ui_with_frame(&mut self, ui: &mut egui::Ui, frame: Option<&eframe::Frame>, previous_cpu_usage: Option<f32>) {
+         let ctx = ui.ctx().clone();
+         self.hover_layer = None;
+         i18n::set_current(i18n::Lang::from_pref(&self.session.prefs().interface.language));
+@@ -2380,7 +2459,7 @@ impl eframe::App for PhotocraftApp {
+         }
+         let t0 = gpu_canvas::now_ms();
+         self.perf.frame_refresh_ms = 0.0;
+-        self.stroke_trace.cpu_prev(frame.info().cpu_usage);
++        self.stroke_trace.cpu_prev(previous_cpu_usage);
+         // A text field's right-click menu, before any field is drawn (text_field_menu.rs).
+         text_field_menu::show(&ctx);
+         // The wheel goes to a focused value field before the canvas or a panel sees it (#5473).
+@@ -2440,7 +2519,7 @@ impl eframe::App for PhotocraftApp {
          }
          let t = theme::Tokens::get(&ctx);
          let backdrop = if chrome { prefs_ui::pasteboard_color(self).unwrap_or(t.canvas) } else { egui::Color32::BLACK };
@@ -798,7 +1440,7 @@ index 6ea5992..6de95e0 100644
              canvas::document_area(self, ui);
          });
          panels::properties_window(self, &ctx);
-@@ -2496,6 +2510,7 @@ impl eframe::App for PhotocraftApp {
+@@ -2496,6 +2575,7 @@ impl eframe::App for PhotocraftApp {
              egui::Modal::new(egui::Id::new("screen-color-wait")).frame(egui::Frame::NONE).backdrop_color(egui::Color32::TRANSPARENT).show(&ctx, |_| {});
              ctx.set_cursor_icon(egui::CursorIcon::Wait);
          }
@@ -806,7 +1448,22 @@ index 6ea5992..6de95e0 100644
          let ui_ms = gpu_canvas::now_ms() - t0;
          // A GPU measurement lands a frame or two after the refresh it belongs to. Refreshes
          // carry them out, but the last refresh before the app settles has none following it, so
-@@ -3187,6 +3202,9 @@ impl PhotocraftApp {
+@@ -2531,12 +2611,13 @@ impl eframe::App for PhotocraftApp {
+         // polling it even when the platform would otherwise put the event loop to sleep.
+         jobs_ui::keep_polling(self, &ctx);
+         // Menus and buttons in this frame may have asked for a file dialog.
+-        self.poll_file_dialog(&ctx, Some(frame));
++        self.poll_file_dialog(&ctx, frame);
+         // Last, after everything drawn this frame: a lost window device can't draw it (#3438).
+         gpu_status::check_window(self, &ctx);
+     }
+ }
+ 
++
+ #[cfg(not(target_arch = "wasm32"))]
+ fn read_dropped(f: &(dyn egui::DroppedFile + Send + Sync)) -> Result<Vec<u8>, String> {
+     f.bytes()
+@@ -3187,6 +3268,9 @@ impl PhotocraftApp {
  #[cfg(test)]
  mod navigator_gpu_tests;
  
@@ -1475,7 +2132,7 @@ index 0000000..ba15f2c
 +    }
 +}
 diff --git a/crates/ui-egui/src/served_fonts.rs b/crates/ui-egui/src/served_fonts.rs
-index b7ae085..37c7640 100644
+index b7ae085..741c7ec 100644
 --- a/crates/ui-egui/src/served_fonts.rs
 +++ b/crates/ui-egui/src/served_fonts.rs
 @@ -2,7 +2,7 @@
@@ -1554,7 +2211,7 @@ index b7ae085..37c7640 100644
  /// Registers delivered font files (`(family, bytes)`, the family as the manifest lists it) and
  /// re-renders the type layers that use those families, or whose text falls back to them (a script
  /// fallback, e.g. Arabic set in Inter), and show our own layout. A PSD layer still
-@@ -89,4 +141,57 @@ mod tests {
+@@ -89,4 +149,57 @@ mod tests {
          assert!(!redraws_for(&layer("hello"), &[thai.into()]));
          assert!(redraws_for(&layer("hello"), &["Inter".into()]), "and a layer still redraws for its own family");
      }

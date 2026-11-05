@@ -1,4 +1,5 @@
 import { FrameChannel, captureGeometry } from "./frame-channel.js";
+import { createCaptureMetrics } from "./capture-metrics.js";
 
 const PREFERENCES_KEY = "photocraft.preferences";
 const LIGHT_DEFAULT_MARKER = "photocraft.integration-light-default-v1";
@@ -52,6 +53,8 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
   let activeDocument = null, preparedDocument = null;
   let interactingUntil = 0, lastState = "", previous = null, raf = 0, generation = 0;
   const lifecycle = new AbortController(), channel = new FrameChannel();
+  const metrics = createCaptureMetrics(globalThis.__woohaaPerformance);
+  let measurementFrame = 0, lastTick = null;
   const state = () => {
     const snapshot = JSON.parse(photocraft.overlay_state() || "{}");
     const actual = JSON.parse(photocraft.runtime_documents());
@@ -63,19 +66,21 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
   };
   const post = (event) => { if (!disposed) onEvent(event); };
   const listen = (target, type, callback, options = {}) => target.addEventListener(type, callback, { ...options, signal: lifecycle.signal });
-  async function capture(snapshot) {
+  async function capture(snapshot, frameId) {
     const geometry = captureGeometry(canvas, snapshot.rect);
     if (!geometry) return null;
     const { x, y, width, height, outWidth, outHeight } = geometry;
-    const bitmap = await createImageBitmap(canvas, x, y, width, height,
-      { resizeWidth: outWidth, resizeHeight: outHeight, resizeQuality: "high" });
+    const bitmap = await metrics.measureAsync(frameId, "bitmap", () => createImageBitmap(canvas, x, y, width, height,
+      { resizeWidth: outWidth, resizeHeight: outHeight, resizeQuality: "high" }));
+    const prepare = metrics.begin(frameId, "prepare");
     const off = document.createElement("canvas");
     off.width = outWidth; off.height = outHeight;
     const ctx = off.getContext("2d", { willReadFrequently: true });
+    metrics.end(prepare);
     try {
       if (!ctx) throw new Error("无法读取编辑器画面");
-      ctx.drawImage(bitmap, 0, 0);
-      return { width: outWidth, height: outHeight, buffer: ctx.getImageData(0, 0, outWidth, outHeight).data.buffer };
+      metrics.measure(frameId, "draw", () => ctx.drawImage(bitmap, 0, 0));
+      return { width: outWidth, height: outHeight, buffer: metrics.measure(frameId, "readback", () => ctx.getImageData(0, 0, outWidth, outHeight)).data.buffer };
     } finally { bitmap.close(); }
   }
 
@@ -89,13 +94,17 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
     raf = 0;
     if (disposed || !visible) return;
     raf = requestAnimationFrame(tick);
+    const frameId = ++measurementFrame;
+    metrics.record({ frame: frameId, stage: "tick", startMs: now, durationMs: 0,
+      ...(lastTick === null ? {} : { intervalMs: now - lastTick }) });
+    lastTick = now;
     let snapshot;
-    try { snapshot = state(); }
+    try { snapshot = metrics.measure(frameId, "state", state); }
     catch (error) {
       visible = false; input = false; generation++; channel.paused = true; cancelAnimationFrame(raf); raf = 0;
       post({ type: "photocraft:error", fatal: true, message: `PhotoCraft 运行已中断：${String(error)}。内存工程可能无法导出；请先尝试下载，重新加载会丢失所有未保存文档。` }); return;
     }
-    const serialized = JSON.stringify(snapshot);
+    const serialized = metrics.measure(frameId, "serialize", () => JSON.stringify(snapshot));
     for (const doc of snapshot.documents) {
       const old = announced.get(doc.id);
       if (!old) post({ type: "photocraft:document-opened", documentId: doc.id, document: doc });
@@ -113,19 +122,25 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
     if (snapshot.viewReady) preparedDocument = snapshot.documentId;
     if (contextLost || document.hidden || !focused || preparedDocument !== snapshot.documentId || !snapshot.rect || !snapshot.documentId || !channel.canCapture(now, now < interactingUntil || !snapshot.viewReady)) return;
     channel.start(now); const token = generation;
-    void capture(snapshot).then((frame) => {
-      channel.busy = false; const current = state();
+    void capture(snapshot, frameId).then((frame) => {
+      channel.busy = false; const current = metrics.measure(frameId, "state", state);
+      const finish = (discarded, stale = false) => {
+        if (frame) metrics.record({ frame: frameId, stage: "capture", startMs: performance.now(), durationMs: 0,
+          width: frame.width, height: frame.height, bytes: frame.buffer.byteLength,
+          sourceWidth: snapshot.docWidth, sourceHeight: snapshot.docHeight, discarded: Number(discarded), stale: Number(stale) });
+      };
       if (disposed || token !== generation || !visible || contextLost || !frame || channel.paused || document.hidden
-        || current.documentId !== snapshot.documentId || current.revision !== snapshot.revision || String(current.rect) !== String(snapshot.rect)) return;
+        || current.documentId !== snapshot.documentId || current.revision !== snapshot.revision || String(current.rect) !== String(snapshot.rect)) { finish(true, true); return; }
       // createImageBitmap snapshots the pixels at invocation. Keep their matching
       // camera/rectangle even when the next animation step has already rendered.
       const pixels = new Uint8Array(frame.buffer);
       const key = `${snapshot.documentId}:${snapshot.rect}:${JSON.stringify(snapshot.documentView)}`;
-      if (previous?.key === key && samePixels(previous.pixels, pixels)) return;
-      previous = { key, pixels: pixels.slice() };
+      if (metrics.measure(frameId, "compare", () => previous?.key === key && samePixels(previous.pixels, pixels))) { finish(true); return; }
+      previous = { key, pixels: metrics.measure(frameId, "copy", () => pixels.slice()) };
       const id = channel.sent(performance.now());
-      post({ type: "photocraft:frame", ...frame, id, generation: token, rect: snapshot.rect,
-        documentId: snapshot.documentId, revision: snapshot.revision, documentView: snapshot.documentView });
+      metrics.measure(frameId, "handoff", () => post({ type: "photocraft:frame", ...frame, id, generation: token, rect: snapshot.rect,
+        documentId: snapshot.documentId, revision: snapshot.revision, documentView: snapshot.documentView }));
+      finish(false);
     }).catch((error) => { channel.busy = false; channel.paused = true; post({ type: "photocraft:error", message: String(error) }); });
   }
   const owns = (event) => canvas.parentElement?.contains(event.target);
@@ -155,6 +170,7 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
     state,
     focus,
     show(clean = true) { visible = true; focused = clean; lastState = ""; generation++; previous = null; preparedDocument = null; channel.paused = false;
+      lastTick = null;
       photocraft.overlay_set_capture_clean(clean); input = true; presentation(); if (!raf) raf = requestAnimationFrame(tick); return generation; },
     hide() { visible = false; input = false; generation++; previous = null; channel.pending = null;
       cancelAnimationFrame(raf); raf = 0; presentation(); },

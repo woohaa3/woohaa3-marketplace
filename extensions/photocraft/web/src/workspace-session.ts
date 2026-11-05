@@ -43,6 +43,8 @@ export class WorkspaceSession {
   private refreshPaused = false;
   private lastRefreshRevision: { documentId: string; revision: number } | null = null;
   private lifetime = 0;
+  private activating: number | null = null;
+  private closing = new Set<string>();
   private generation = 0;
   private disposed = false;
   private abort = new AbortController();
@@ -51,10 +53,15 @@ export class WorkspaceSession {
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
   publish = () => { for (const listener of this.listeners) listener(); };
   fail(error: unknown) { this.error = String(error instanceof Error ? error.message : error); this.publish(); }
-  async initialize(canvas: HTMLCanvasElement) {
+  async initialize(target: HTMLElement) {
     if (this.engine) return this.engine;
     if (this.disposed) throw new Error("工作区已释放");
-    this.flight ??= this.factory({ canvas, assetBaseUrl: this.assetBaseUrl, onEvent: this.receive }).then(engine => {
+    this.flight ??= this.factory({ target, get canvas() {
+      if (target instanceof HTMLCanvasElement) return target;
+      let canvas = target.querySelector("canvas");
+      if (!canvas) { canvas = document.createElement("canvas"); canvas.style.cssText = "width:100%;height:100%;display:block"; canvas.tabIndex=0; target.append(canvas); }
+      return canvas;
+    }, assetBaseUrl: this.assetBaseUrl, onEvent: this.receive }).then(engine => {
       if (this.disposed) { engine.dispose(); throw new Error("工作区已释放"); }
       this.engine = engine; return engine;
     }).catch(error => { this.flight = null; this.fail(error); throw error; });
@@ -170,8 +177,12 @@ export class WorkspaceSession {
     try {
       const bytes = await read();
       if (this.disposed || this.recovery || this.page !== lease) throw new Error("打开已取消");
-      const id = this.engine.open(crypto.randomUUID(), name, bytes);
+      const id = await this.engine.open(crypto.randomUUID(), name, bytes, source.kind === "node" ? source.nodeId : null);
       this.documents.set(id, { id, lifetime: ++this.lifetime, source, appliedRevision: null });
+      if (this.recovery || this.disposed || this.page !== lease) {
+        this.targetId = id; this.visible = false;
+        throw new Error("文档已保留在本地工作区，请返回来源或保存后关闭");
+      }
       await this.activate(id); return id;
     } catch (error) {
       if (wasVisible && previous && this.documents.has(previous) && this.page === lease && !this.recovery && !this.disposed) {
@@ -183,7 +194,9 @@ export class WorkspaceSession {
   async activate(id: string) {
     const doc = this.documents.get(id); if (!doc || !this.engine) return;
     if (this.recovery) throw new Error("扩展已停用，请先保存或关闭本地文档");
-    this.engine.settle(); const token = ++this.activation; this.targetId = id;
+    this.engine.settle(); const token = ++this.activation; this.activating = token; this.targetId = id;
+    if (this.engine.backend === "native") this.engine.hide();
+    try {
     if (doc.source.kind === "node" && !doc.unbound) {
       const page = await this.navigate(doc.source.canvasId, doc.source.nodeId);
       if (token !== this.activation || this.documents.get(id) !== doc) return;
@@ -197,8 +210,11 @@ export class WorkspaceSession {
       if (!result.ok) throw new Error("无法切换到文件工作区");
     }
     if (token !== this.activation || this.documents.get(id) !== doc) return;
-    this.engine.activate(id); this.state = null; this.visible = true;
+    await this.engine.activate(id);
+    if (token !== this.activation || this.documents.get(id) !== doc || this.recovery || this.disposed) return;
+    this.state = null; this.visible = true;
     this.engine.show(doc.source.kind === "node" && !doc.unbound); this.publish();
+    } finally { if (this.activating === token) this.activating = null; }
   }
   hide(invalidate = true) { this.visible = false; if (invalidate) ++this.activation; this.engine?.hide(); this.publish(); }
   settle() { this.engine?.settle(); }
@@ -307,14 +323,14 @@ export class WorkspaceSession {
         return;
       }
       // 解码前不丢旧 tab 之外的任何内容：canonical 已在服务端生效，且本地文档是干净的。
-      this.engine!.close(doc.id);
+      await this.engine!.close(doc.id);
       this.documents.delete(doc.id);
       this.targetId = null;
       // 同步镜像，避免同一事件循环内的后续打开按陈旧文档数误判超限。
       const remaining = this.engine!.state().documents?.filter((candidate) => candidate.id !== doc.id) ?? [];
       this.state = this.state ? { ...this.state, documentId: null, documents: remaining } : this.state;
       try {
-        const next = this.engine!.open(crypto.randomUUID(), image.name, bytes);
+        const next = await this.engine!.open(crypto.randomUUID(), image.name, bytes, doc.source.nodeId);
         this.documents.set(next, {
           id: next, lifetime: ++this.lifetime, source: { ...doc.source, image }, appliedRevision: pending.revision
         });
@@ -348,11 +364,17 @@ export class WorkspaceSession {
     const attempt = doc.attempt;
     this.applying.add(id); this.publish();
     try {
-      await attempt.writer.apply(async () => this.engine!.export(id));
+      await attempt.writer.apply(async () => this.engine!.export(id, false, attempt.revision ?? undefined));
       if (this.documents.get(id) !== doc) return;
+      if (attempt.revision !== null) await this.engine!.markSaved?.(id, attempt.revision);
       doc.appliedRevision = attempt.revision;
       const image = attempt.writer.committedImage(); if (image) source.image = image;
       doc.attempt = undefined; doc.conflict = undefined;
+    } catch (error) {
+      // A rejected export never froze pixels or started a write. A later retry
+      // may freeze the new revision instead of being stuck on an obsolete one.
+      if (doc.attempt === attempt && !attempt.writer.isFrozen() && !attempt.writer.isPending()) doc.attempt = undefined;
+      throw error;
     } finally { this.applying.delete(id); this.publish(); }
   }
   async reload(id: string) {
@@ -370,9 +392,9 @@ export class WorkspaceSession {
     if (this.page !== lease || this.recovery) throw new Error("页面绑定已撤销");
     if (doc.attempt) await doc.attempt.writer.abandon();
     // Decode before closing the old tab. A corrupt replacement must never destroy local work.
-    const next = this.engine.open(crypto.randomUUID(), image.name, bytes);
+    const next = await this.engine.open(crypto.randomUUID(), image.name, bytes, source.nodeId);
     this.documents.set(next, { id: next, lifetime: ++this.lifetime, source: { ...source, image }, appliedRevision: null });
-    this.engine.close(id); this.documents.delete(id); await this.activate(next);
+    await this.engine.close(id); this.documents.delete(id); await this.activate(next);
   }
   async close(id: string) {
     const doc = this.documents.get(id); if (!doc || !this.engine) return;
@@ -381,7 +403,9 @@ export class WorkspaceSession {
     if (doc.attempt && !this.recovery) await doc.attempt.writer.abandon();
     const ids = this.engine.state().documents?.map(d => d.id) ?? [...this.documents.keys()], index = ids.indexOf(id);
     const next = this.targetId === id ? ids[index - 1] ?? ids[index + 1] : this.targetId;
-    this.engine.close(id); this.documents.delete(id);
+    this.closing.add(id);
+    try { await this.engine.close(id); } finally { this.closing.delete(id); }
+    this.documents.delete(id);
     const remaining = this.engine.state().documents?.filter(d => d.id !== id) ?? [];
     this.state = { ...this.state!, documentId: null, documents: remaining };
     this.targetId = null; this.publish();
@@ -392,13 +416,19 @@ export class WorkspaceSession {
   revoke(reason: "disabled" | "identity") {
     this.hide(); this.recovery = reason; this.unsubscribePage?.(); this.unsubscribePage = undefined; this.page = null;
     this.historyOverrides.clear(); this.pendingRefresh = null; this.refreshPaused = false;
-    this.abort.abort(); this.abort = new AbortController(); for (const wake of this.pageWaiters) wake(); this.publish(); return this.documents.size > 0;
+    this.abort.abort(); this.abort = new AbortController(); for (const wake of this.pageWaiters) wake(); this.publish(); return this.documents.size > 0 || this.opening;
   }
   adopt() { if (this.recovery === "disabled") { this.recovery = null; this.publish(); } }
   receive = (event: RuntimeEvent) => {
     if (this.disposed) return;
     if (event.type === "photocraft:state") {
       this.state = event.state as EngineState;
+      if (this.engine?.backend === "native" && this.state.documents) {
+        const live = new Set(this.state.documents.map(doc => doc.id));
+        let removed = false;
+        for (const [id,entry] of this.documents) if (!live.has(id) && !this.closing.has(id) && !this.applying.has(id) && !entry.attempt) { this.documents.delete(id); removed = true; }
+        if (removed && !this.documents.size && !this.opening) { this.targetId = null; this.visible = false; this.onEmpty?.(); }
+      }
       for (const d of this.state.documents ?? []) if (!this.documents.has(d.id)) this.documents.set(d.id, {
         id: d.id, lifetime: ++this.lifetime, source: { kind: "file", id: crypto.randomUUID() }, appliedRevision: null
       });
@@ -406,7 +436,7 @@ export class WorkspaceSession {
         const entry = this.documents.get(d.id);
         if (entry && entry.appliedRevision === null && entry.source.kind === "node") entry.appliedRevision = d.revision;
       }
-      if (this.visible && this.state.documentId && this.state.documentId !== this.targetId && !this.opening && !this.recovery) {
+      if (this.visible && this.state.documentId && this.state.documentId !== this.targetId && !this.opening && this.activating === null && !this.recovery) {
         void this.activate(this.state.documentId).catch(error => this.fail(error));
       }
       this.publish();

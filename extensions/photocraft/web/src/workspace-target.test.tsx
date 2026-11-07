@@ -47,13 +47,17 @@ it("keeps the workspace target on the public content rect and does not remount t
   app.className = "app";
   app.style.setProperty("--focus-content-width", "1120px");
   document.body.append(app);
+  const setImageFocusTargets = vi.fn();
+  const workingWithoutAsset = { ...canvas, assets: [] };
   const ctx = {
     canvasScope: { canvasId: () => "c" },
     persistentSurfaces: { acquire: () => surface },
     provide: vi.fn(),
     effect: vi.fn(),
-    canvasState: { getWorkingCanvas: () => canvas, subscribe: () => () => {} },
-    canvasRuntime: { setImageFocusTargets: vi.fn(), setImageFocusTexture: vi.fn(), setImageFocus: vi.fn() },
+    // Stable target registration must follow canonical, even when the working projection
+    // has not yet received the ready asset. Rendering may still use the working projection.
+    canvasState: { getCanvas: () => canvas, getWorkingCanvas: () => workingWithoutAsset, subscribe: () => () => {} },
+    canvasRuntime: { setImageFocusTargets, setImageFocusTexture: vi.fn(), setImageFocus: vi.fn() },
     slots: {
       register: (name: string, definition: (typeof registrations)[string]) => {
         registrations[name] = definition;
@@ -62,6 +66,9 @@ it("keeps the workspace target on the public content rect and does not remount t
     }
   };
   createPhotoCraftExtension({ canvasId: "c" })(ctx as never);
+
+  // canonical has the ready asset; the working projection intentionally does not.
+  expect(setImageFocusTargets).toHaveBeenCalledWith(["n1"]);
 
   // 两个工作区都自绘顶部/底部 chrome，公共层不再预留宿主标题栏/底栏。
   expect(registrations["canvas.focus-workspace"]!.layout).toEqual({ chromeOwner: "workspace" });

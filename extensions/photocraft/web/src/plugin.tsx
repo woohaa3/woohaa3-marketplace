@@ -70,13 +70,17 @@ export function createPhotoCraftExtension(options: PhotoCraftWebPluginOptions = 
     ctx.provide(IMAGE_EDIT_SERVICE as never, createImageEditService(() => owner?.value ?? null) as never);
     let lastTargets = "";
     const syncTargets = () => {
-      const ids = imageFocusTargetIds(ctx.canvasState.getWorkingCanvas()), key = JSON.stringify(ids);
+      // 可聚焦图片身份绑定稳定资产，和宿主导航的目标校验一样以 canonical 为准；
+      // working 投影只用于画面，不应把未确认资产登记成可编辑目标。
+      const ids = imageFocusTargetIds(ctx.canvasState.getCanvas()), key = JSON.stringify(ids);
       if (key !== lastTargets) { lastTargets = key; ctx.canvasRuntime.setImageFocusTargets(ids); }
     };
     syncTargets(); const unsubscribe = ctx.canvasState.subscribe(syncTargets);
     const render = (props: { canvas?: unknown; focus?: { nodeId: string; kind: string } | null }) => {
       const nodeId = props.focus?.nodeId ?? null;
-      const image = nodeId ? resolveImageFocusImage(props.canvas ?? ctx.canvasState.getWorkingCanvas(), nodeId) : null;
+      // The focus target and its stable asset are canonical; a working-only preview
+      // must not make the focus overlay open a different/unsaved image identity.
+      const image = nodeId ? resolveImageFocusImage(ctx.canvasState.getCanvas() ?? props.canvas ?? ctx.canvasState.getWorkingCanvas(), nodeId) : null;
       const surface = acquire();
       return <WorkspaceTarget owner={surface} canvasId={canvasId} nodeId={nodeId} image={image} />;
     };

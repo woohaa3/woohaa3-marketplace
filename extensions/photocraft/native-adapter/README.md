@@ -1,5 +1,9 @@
 # Native PhotoCraft variant
 
+The adapter implementation lives in `desktop/src/photocraft` in the public client.
+Building this variant requires a client checkout containing that directory and
+`desktop/vendor/photocraft` (first included in client commit `477b55df`).
+
 The optional `native-ui` feature owns one official `PhotocraftApp`; every command,
 UI edit, history operation, job commit and export snapshot uses `app.session`.
 The CPU test variant owns one engine Session instead. They never coexist in one owner.

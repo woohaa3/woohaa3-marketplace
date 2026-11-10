@@ -11,7 +11,7 @@ export { desktopConfig } from './build-native.mjs';
 const root = path.dirname(fileURLToPath(import.meta.url));
 export async function prepareDesktop({ clientRoot, out, debug = false, env = process.env }) {
   const client = await fs.realpath(clientRoot);
-  const output = path.resolve(out ?? path.join(root, '.local/desktop-assembly'));
+  const output = path.resolve(out ?? path.join(root, '.local/desktop-assembly-client-provider'));
   const patch = await fs.readFile(path.join(root, 'web/patch/0001-external-canvas-overlay.patch'));
   const patchHash = createHash('sha256').update(patch).digest('hex');
   const source = path.join(root, '.local/photocraft-source', `e6d6fb45a40250f518d2e824236a8fdcaa4472c8-${patchHash}`);

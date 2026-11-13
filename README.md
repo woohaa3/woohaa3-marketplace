@@ -125,15 +125,31 @@ Release 资产只带得出 `extensionId`、版本与摘要；客户端卡片上�
 
 ## 发布一个新版本
 
-打包工具链在客户端仓里，不在这里复制一份（在父仓根目录执行，`client` 是它的子模块）：
+**主通道是 woohaa-server 市场**：客户端仓提供前置判定入口，父仓负责上传、提交与审核。
 
 ```bash
-# 1. 打包 + 签名（--key 省略则是未签名包，市场渠道会拒绝）
+# 在父仓根目录执行（client 与 marketplace 都是它的子模块）
+# 1. 推进版本（一次改全 extension.json / site.version / package.json / metadata）
+pnpm -C client run ext:bump <extensionId> --patch
+
+# 2. 判定 + 打包 + 签名 + 上传 + 提交（--approve 需要 marketplace.review）
+node client/scripts/release-extension-market.mjs <extensionId> \
+  --key <ed25519私钥.pem> --notes "<发布说明>" --server <url> --token-file <path>
+```
+
+`ext:release` 只做两项判定就转交父仓 `pnpm release:extension`（打包、签名、上传、提交、审核
+只有那一份实现）：站点 `backend` 工厂与 `bootstrap` 槽位扩展直接拒绝（只能随客户端发版），
+有未发版改动时拒绝并提示先运行 `ext:bump`。
+
+**备用通道是 GitHub Release**：跨团队或没有自建服务端时使用。
+
+```bash
+# 打包 + 签名（--key 省略则是未签名包，市场渠道会拒绝）
 node client/scripts/pack-extension.mjs marketplace/extensions/hello-marketplace \
   --key <ed25519私钥.pem> \
   --out hello-marketplace-0.2.0.wxt
 
-# 2. 发布 Release，资产名必须是 <extensionId>-<version>.wxt
+# 发布 Release，资产名必须是 <extensionId>-<version>.wxt
 gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hello-marketplace 0.2.0"
 ```
 

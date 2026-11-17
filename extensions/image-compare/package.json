@@ -1,6 +1,6 @@
 {
   "name": "@woohaa3/extension-image-compare",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "图片对比：选中两张图片节点，逐像素比对并把差异图与结论落成新节点。纯浏览器扩展。",

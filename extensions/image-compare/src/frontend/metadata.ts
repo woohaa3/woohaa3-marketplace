@@ -6,7 +6,7 @@ import type { ExtensionFrontendMetadata } from "@woohaa3/contracts";
 
 export const metadata: ExtensionFrontendMetadata = {
   extensionId: "image-compare",
-  version: "0.1.0",
+  version: "0.1.1",
   label: "图片对比",
   description: "在「新建」里加一个对比节点：连入两张图片，逐像素比对并生成差异图与结论。",
   icon: "plugin",

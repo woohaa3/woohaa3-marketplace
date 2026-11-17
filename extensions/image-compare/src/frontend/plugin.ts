@@ -1,5 +1,6 @@
 /**
- * 图片对比：在「在此处新建」里新建一个对比节点，把两张图片连线到它上面，选中它点「对比」。
+ * 图片对比：在「在此处新建」里新建一个对比节点，或从图片拉出连线后直接选「对比」。
+ * 把两张图片连线到它上面，选中它点「对比」。
  *
  * 对比节点是一个带标记的 `image` 节点（画布不接受新的节点类型，未知类型会被规范化成 custom
  * 并丢掉 nodeData）。差异图（只有差异一格，A、B 已在画布上）和结论都写回它自己：结论画在图片下方，全文存在 nodeData.imageCompare.conclusion。
@@ -119,7 +120,12 @@ export function imageCompareExtension() {
         label: "对比",
         icon: SwapColorsIcon,
         order: 10,
-        createNodeData: () => ({ title: NODE_TITLE, suppressModelPanel: true, [COMPARE_MARKER]: { schemaVersion: 1 } })
+        acceptsConnection: true,
+        createNodeData: (context) => {
+          // 只有从图片拉出的线才能直接落成对比节点；其它类型连过来没有可对比的像素。
+          if (context.connectFrom && context.connectFrom.nodeType !== "image") return undefined;
+          return { title: NODE_TITLE, suppressModelPanel: true, [COMPARE_MARKER]: { schemaVersion: 1 } };
+        }
       }),
       "image-compare-node-template"
     );

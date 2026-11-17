@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "extensionId": "image-compare",
+  "version": "0.1.0",
+  "engines": {
+    "hostAbi": "^1.0.0",
+    "sdkAbi": "^1.0.0",
+    "protocolVersion": 1
+  },
+  "icon": { "glyph": "plugin" }
+}

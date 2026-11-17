@@ -18,6 +18,12 @@
       "description": "教程示例：工具栏按钮向宿主要一条备注。client 负责显示，host 负责配置和路由。",
       "icon": "plugin",
       "hotReload": true
+    },
+    "image-compare": {
+      "name": "图片对比",
+      "description": "「新建」里加一个对比节点：连入两张图片，逐像素比对，生成差异图与结论。纯浏览器计算。",
+      "icon": "media",
+      "hotReload": true
     }
   }
 }

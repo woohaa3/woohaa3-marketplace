@@ -174,6 +174,7 @@ gh release create v0.2.0 hello-marketplace-0.2.0.wxt --title v0.2.0 --notes "hel
 | `catalog.json` | 市场目录：名称、描述、图标、`hotReload`（只影响展示） |
 | `extensions/hello-marketplace/` | 纯浏览器示例，用来走通 Release 安装 |
 | `extensions/canvas-note/` | 教程示例：client 按钮 + host 配置与路由 |
+| `extensions/image-compare/` | 图片对比：「新建」菜单里的对比节点，连入两张图片后浏览器内逐像素比对 |
 | `extensions/<id>/` | 扩展源码；`extension.json` 声明、`src/frontend/` 浏览器入口 |
 | `extensions/<id>/`（多包） | 复杂扩展可自带 `pnpm-workspace.yaml`；此时可加载包放在 `extension/`，其余包是它的构建依赖（见 `photocraft`） |
 | `.gitignore` | 构建产物（`browser-dist/`、`backend-dist/`）不入库，发布只走 Release 资产 |

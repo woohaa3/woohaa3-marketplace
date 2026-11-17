@@ -1,0 +1,33 @@
+{
+  "name": "@woohaa3/extension-image-compare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "图片对比：选中两张图片节点，逐像素比对并把差异图与结论落成新节点。纯浏览器扩展。",
+  "exports": {
+    "./frontend": {
+      "types": "./src/frontend/index.ts",
+      "import": "./src/frontend/index.ts"
+    }
+  },
+  "files": ["src", "browser-dist", "extension.json"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.12",
+    "@woohaa3/contracts": "link:../../../client/web/contracts",
+    "@woohaa3/frontend": "link:../../../client/web/frontend",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3"
+  }
+}

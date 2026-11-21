@@ -61,7 +61,11 @@ export class WorkspaceSession {
       let canvas = target.querySelector("canvas");
       if (!canvas) { canvas = document.createElement("canvas"); canvas.style.cssText = "width:100%;height:100%;display:block"; canvas.tabIndex=0; target.append(canvas); }
       return canvas;
-    }, assetBaseUrl: this.assetBaseUrl, onEvent: this.receive }).then(engine => {
+    }, assetBaseUrl: this.assetBaseUrl, onEvent: this.receive,
+    // Read lazily at each open: the editor workspace outlives renderer visits, so the visit must
+    // be the one current when the document is opened, not the one that created the workspace.
+    canvasVisit: () => this.page?.ctx.canvasRuntime.runtime?.()?.currentCanvasScope?.()?.token ?? null,
+    }).then(engine => {
       if (this.disposed) { engine.dispose(); throw new Error("工作区已释放"); }
       this.engine = engine; return engine;
     }).catch(error => { this.flight = null; this.fail(error); throw error; });

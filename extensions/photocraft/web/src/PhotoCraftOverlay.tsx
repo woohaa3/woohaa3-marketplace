@@ -1,7 +1,8 @@
 /** One mounted canvas per app owner; page transitions only change the presentation lease. */
 import { useEffect, useId, useRef, useState } from "react";
 import { resolvePublicUrl } from "@woohaa3/frontend/extension-api";
-import { createFocusSession } from "./focus-session.js";
+import { createFocusSession, type PhotoCraftCanvasLease } from "./focus-session.js";
+import { watchFocusScope } from "./focus-scope-watch.js";
 import { validDocumentView, validFrame, validRect, type DocumentRect } from "./protocol.js";
 import { WorkspaceSession } from "./workspace-session.js";
 import "./photocraft-overlay.css";
@@ -23,7 +24,15 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
   // context，因此直接订阅页面导航快照（change: 2026-10-27-add-image-history-to-photocraft-focus，D3）。
   const navigation = page?.ctx.canvasNavigation;
   const [, refreshNavigation] = useState(0);
+  const [scopeRevision, refreshScope] = useState(0);
   useEffect(() => navigation?.subscribe(() => refreshNavigation(value => value + 1)), [navigation]);
+  // Renderer visit changes (canvas switch, same-canvas renderer recreation) invalidate the
+  // in-flight capture first, then re-run the frame lease below under the new visit.
+  useEffect(() => {
+    const service = page?.ctx.canvasRuntime, engine = session.engine;
+    if (!service || !engine) return;
+    return watchFocusScope(service, engine, () => refreshScope(value => value + 1));
+  }, [page, session.engine]);
   const navigationState = navigation?.getSnapshot();
   const engineDoc = state?.documents?.find(d => d.id === closeId);
   const closeDoc = closeId ? session.documents.get(closeId) : undefined;
@@ -101,12 +110,24 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
   useEffect(() => {
     setShown(false); setHole(null);
     if (!session.visible || !page || !node || preview) { session.onFrame = undefined; return; }
-    const focus = createFocusSession(page.ctx.canvasRuntime, node.nodeId, () => stage.current);
+    const service = page.ctx.canvasRuntime;
+    const renderer = service.runtime?.();
+    // Freeze the visit that owns the editor now: textures, projection, cleanup and capture ack
+    // all keep this lease, so neither a frame decoded after switching away nor an old cleanup can
+    // reach the next visit. Legacy runtimes have no scope at all and keep the old call shape.
+    const lease: PhotoCraftCanvasLease | null = renderer?.currentCanvasScope?.() ?? null;
+    const scoped = typeof renderer?.currentCanvasScope === "function" && typeof renderer?.canvasScopeMode === "function"
+      && renderer.canvasScopeMode() === "scoped";
+    if (scoped && (!lease || lease.canvasId !== page.canvasId)) { session.onFrame = undefined; return; }
+    // Invalidate captures still in flight for the previous frame of this visit; frames must then
+    // carry the returned generation.
+    const captureGeneration = renderer && lease ? session.engine?.invalidateCapture?.() : undefined;
+    const focus = createFocusSession(service, node.nodeId, () => stage.current, lease);
     const activation = session.activation;
     if (session.engine?.backend === "native") {
       // Shared native textures have no CPU frame callback. Only project geometry;
       // the desktop render owner supplies both native texture targets directly.
-      page.ctx.canvasRuntime.setImageFocusTexture(null);
+      service.setImageFocusTexture(null);
       const project = () => {
         const current = session.state;
         if (activation !== session.activation || current?.documentId !== session.targetId || !current.viewReady || !validRect(current.rect) || !validDocumentView(current.documentView)) return;
@@ -118,13 +139,14 @@ export function PhotoCraftOverlay({ session, onRelease }: PhotoCraftOverlayProps
     }
     session.onFrame = frame => {
       if (activation !== session.activation || frame.documentId !== session.targetId || !validFrame(frame) || !validDocumentView(frame.documentView)
-        || frame.revision !== session.state?.revision || String(frame.rect) !== String(session.state?.rect)) return false;
+        || frame.revision !== session.state?.revision || String(frame.rect) !== String(session.state?.rect)
+        || (captureGeneration !== undefined && frame.generation !== captureGeneration)) return false;
       const accepted = focus.present(frame);
       if (accepted) { setShown(true); setHole(frame.rect); }
       return accepted;
     };
     return () => { session.onFrame = undefined; focus.dispose(); };
-  }, [session, page, node?.nodeId, session.visible, session.activation, preview?.url]);
+  }, [session, page, node?.nodeId, session.visible, session.activation, preview?.url, scopeRevision]);
   const download = async (id: string) => {
     try {
       const bytes = await session.export(id), url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/x-photocraft" }));

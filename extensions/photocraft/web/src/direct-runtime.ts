@@ -19,10 +19,29 @@ export type DirectRuntime = {
   export(id: string, project?: boolean, expectedRevision?: number): Uint8Array | Promise<Uint8Array>;
   markSaved?(id: string, revision: number): Promise<void>;
   ack(id: number, accepted: boolean): void;
+  /**
+   * Drops in-flight captures and their ack identity without touching presentation, input or the
+   * rAF loop; returns the generation that the next accepted frame must carry. Used when the
+   * renderer visit changes, so a frame captured under the previous visit can never be presented
+   * (or acked as accepted) under the new one.
+   */
+  invalidateCapture?(): number;
   settle(): EngineState;
   dispose(): void;
 };
-export type RuntimeFactory = (options: { target?: HTMLElement; canvas: HTMLCanvasElement; assetBaseUrl: string; onEvent(event: RuntimeEvent): void }) => Promise<DirectRuntime>;
+export type RuntimeOptions = {
+  target?: HTMLElement;
+  canvas: HTMLCanvasElement;
+  assetBaseUrl: string;
+  onEvent(event: RuntimeEvent): void;
+  /**
+   * Renderer visit token captured when the document editor lease is taken. The native backend
+   * sends it with every open so the desktop compositor can verify the visit before presenting;
+   * old hosts (and the WASM backend) never need it.
+   */
+  canvasVisit?(): string | null;
+};
+export type RuntimeFactory = (options: RuntimeOptions) => Promise<DirectRuntime>;
 export const createDirectRuntime: RuntimeFactory = async (options) => {
   const { tryCreateNativeRuntime } = await import("./native-runtime.js");
   const native = await tryCreateNativeRuntime(options);

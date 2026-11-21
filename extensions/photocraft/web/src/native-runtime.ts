@@ -17,6 +17,10 @@ export async function tryCreateNativeRuntime(options: Parameters<RuntimeFactory>
   const candidate = nativeDocumentEditorClient();
   if (!candidate) return null;
   const client = candidate;
+  // Renderer visit the editor workspace was created under. New hosts send it with every document
+  // open so the desktop compositor can reject frames from a previous visit (canvas switch or
+  // same-canvas renderer recreation) instead of compositing them into the new one.
+  const visit = () => options.canvasVisit?.() ?? null;
   let capabilities = await client.capabilities();
   if (capabilities.providers.some(p => p.provider_id === "photocraft-native") && !capabilities.gpu_ready) {
     for (let attempt=0; attempt<30 && !capabilities.gpu_ready; ++attempt) {
@@ -160,7 +164,7 @@ export async function tryCreateNativeRuntime(options: Parameters<RuntimeFactory>
     show:()=>{shown=true;inputReady=false;const token=++activation;updateLayout();void operation({kind:"show"}).then(()=>{if(shown&&activation===token)inputReady=true;}).catch(fail);return token;},
     hide:()=>{shown=false;inputReady=false;++activation;inputs=[];void operation({kind:"hide"}).catch(fail);},
     input:active=>{if(enabled&&!active){input({kind:"blur"},true);flushInput();}enabled=active;},focus:()=>{canvas.focus();ime.focus();},
-    open:async(operationId,name,bytes,nodeBinding)=>{const ticket=await client.upload(bytes);try{const result=await operation({kind:"open",source_id:operationId,node_binding:nodeBinding ?? null,format:sourceFormat(name,bytes),bytes_blob_id:ticket});if(result.kind!=="opened")throw new Error("原生文档未打开");names.set(result.document_id,name);return result.document_id;}catch(error){try{await client.discardUpload(ticket);}catch{}throw error;}},
+    open:async(operationId,name,bytes,nodeBinding)=>{const lease=visit();const ticket=await client.upload(bytes);try{const result=await operation({kind:"open",source_id:operationId,node_binding:nodeBinding ?? null,...(lease ? {node_visit:lease} : {}),format:sourceFormat(name,bytes),bytes_blob_id:ticket});if(result.kind!=="opened")throw new Error("原生文档未打开");names.set(result.document_id,name);return result.document_id;}catch(error){try{await client.discardUpload(ticket);}catch{}throw error;}},
     activate:async id=>{pendingActivation=id;try{await operation({kind:"activate",document_id:id});return ++activation;}catch(error){if(pendingActivation===id)pendingActivation=null;throw error;}},
     close:async id=>{const result=await operation({kind:"close",document_id:id,expected_revision:revision(id),discard:true});if(result.kind==="needs-settlement")throw new Error("请先结束当前操作");names.delete(id);},
     export:async(id,project,expectedRevision)=>{

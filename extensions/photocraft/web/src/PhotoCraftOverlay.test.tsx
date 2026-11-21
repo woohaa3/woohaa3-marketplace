@@ -8,16 +8,18 @@ import type { DirectRuntime, EngineState } from "./direct-runtime.js";
 vi.mock("@woohaa3/frontend/extension-api", () => ({ resolvePublicUrl: (p: string) => p }));
 let root: Root, host: HTMLDivElement, session: WorkspaceSession;
 let engine: DirectRuntime;
+let rootUnmounted = false;
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  rootUnmounted = false;
   host=document.createElement("div");document.body.append(host);root=createRoot(host);
   const state: EngineState={ documentId:"a",documentName:"a.png",docWidth:2,docHeight:2,revision:0,dirty:true,rect:[0,0,2,2],modal:false,operation:false,escOwned:false,viewReady:true,documents:[{id:"a",name:"a.png",revision:0,dirty:true}] };
   engine={state:()=>state,show:vi.fn(()=>1),hide:vi.fn(),input:vi.fn(),focus:vi.fn(),open:()=>"a",activate:()=>1,close:vi.fn(),export:()=>new Uint8Array(33),ack:vi.fn(),settle:()=>state,dispose:vi.fn()};
   session=new WorkspaceSession("https://app.test/assets/",async()=>engine);
   await act(async()=>root.render(<PhotoCraftOverlay session={session} onRelease={()=>session.dispose()}/>));
 });
-afterEach(async()=>{await act(async()=>root.unmount());session.dispose();host.remove();vi.unstubAllGlobals();});
+afterEach(async()=>{if(!rootUnmounted)await act(async()=>root.unmount());session.dispose();host.remove();vi.unstubAllGlobals();});
 it("retains the input surface across hiding and recovery; never renders an iframe", async()=>{
   const canvas=host.querySelector<HTMLDivElement>(".photocraft-overlay__frame");expect(canvas).not.toBeNull();expect(host.querySelector("iframe")).toBeNull();
   await act(async()=>{session.visible=true;session.publish();session.hide();session.revoke("disabled");});
@@ -82,7 +84,7 @@ it("reports node loading on the node instead of covering the canvas, and keeps t
   expect(host.querySelector(".photocraft-overlay__loading")?.textContent).toContain("正在准备画布");
 });
 
-function attachPage() {
+function attachPage(runtimePatch?: Record<string, unknown>) {
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach(listener => listener());
   let snapshot: any = { mode: { type: "node-focus", nodeId: "node-1", kind: "image", owner: "direct" }, panel: null, menu: null };
@@ -105,6 +107,7 @@ function attachPage() {
     setImageFocusTexture: vi.fn(), setImageFocus: vi.fn(), setImageFocusPending: vi.fn(),
     subscribeFocusContentRect: vi.fn(() => () => {}), focusContentRect: () => null
   };
+  Object.assign(runtime, runtimePatch);
   const ctx: any = {
     canvasNavigation: navigation, canvasRuntime: runtime,
     canvasSession: { isWritable: () => true },
@@ -240,4 +243,39 @@ it("prompts again when the document changed after its last saved project", async
   });
   expect(engine.close).not.toHaveBeenCalled();
   expect(host.textContent).toContain("当前修改尚未保存");
+});
+
+/**
+ * Renderer access identity: the overlay must capture the visit when the node document is opened
+ * and re-run its frame lease when the renderer visit changes, so a capture of the previous visit
+ * can never be presented (or acked as accepted) under the new one.
+ */
+it("subscribes the renderer visit and re-runs the frame lease when it changes", async()=>{
+  const handleA = { canvasId: "c", token: "A", sequence: 1 };
+  const handleB = { canvasId: "c", token: "B", sequence: 2 };
+  let current = handleA;
+  const scopeListeners = new Set<() => void>();
+  const renderer = {
+    canvasScopeMode: () => "scoped",
+    currentCanvasScope: () => current,
+    subscribeCanvasScope(listener: () => void) { scopeListeners.add(listener); return () => { scopeListeners.delete(listener); }; },
+  };
+  let generation = 0;
+  const invalidateCapture = vi.fn(() => ++generation);
+  Object.defineProperty(engine, "invalidateCapture", { value: invalidateCapture, configurable: true });
+  attachPage({ runtime: () => renderer });
+  await openNodeDocument();
+  expect(scopeListeners.size).toBe(1);
+  // Worst case for the old behaviour: the scoped runtime had no focus target, so a capture left
+  // over from earlier work was never invalidated. At least one call must have happened, and the
+  // visit watcher must happen for every change (idempotent (re)generation is fine).
+  expect(invalidateCapture.mock.calls.length).toBeGreaterThan(0);
+  const callsBefore = invalidateCapture.mock.calls.length;
+  const first = invalidateCapture.mock.results.at(-1)?.value;
+  await act(async()=>{ current = handleB; scopeListeners.forEach(listener => listener()); });
+  expect(invalidateCapture.mock.calls.length).toBeGreaterThan(callsBefore);
+  expect(invalidateCapture.mock.results.at(-1)?.value).not.toBe(first);
+  await act(async()=>root.unmount());
+  rootUnmounted = true;
+  expect(scopeListeners.size).toBe(0);
 });

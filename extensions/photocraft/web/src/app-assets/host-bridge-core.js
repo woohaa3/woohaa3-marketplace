@@ -185,6 +185,9 @@ export async function createRuntime({ canvas, assetBaseUrl, onEvent }, loadModul
     close(id) { photocraft.runtime_close(id); },
     export(id, project = false) { return photocraft.runtime_export(id, project); },
     ack(id, accepted) { if (!accepted) previous = null; channel.ack(id); },
+    // Visit barrier: in-flight captures are dropped without touching presentation, input, busy
+    // or the rAF loop. The next accepted frame must carry the returned generation.
+    invalidateCapture() { generation++; previous = null; channel.pending = null; return generation; },
     settle() { const s = state(); if (s.operation || s.modal) throw new Error("请先确认或取消 PhotoCraft 中的当前操作"); return s; },
     dispose() { if (disposed) return; disposed = true; visible = false; generation++; cancelAnimationFrame(raf); lifecycle.abort(); photocraft.runtime_requests(); announced.clear(); photocraft.runtime_destroy(); }
   };
